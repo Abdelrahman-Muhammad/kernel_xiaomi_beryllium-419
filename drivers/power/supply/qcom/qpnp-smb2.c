@@ -3103,6 +3103,15 @@ static int smb2_probe(struct platform_device *pdev)
 		goto cleanup;
 	}
 
+	extcon_set_property_capability(chg->extcon, EXTCON_USB,
+			EXTCON_PROP_USB_TYPEC_POLARITY);
+	extcon_set_property_capability(chg->extcon, EXTCON_USB,
+			EXTCON_PROP_USB_SS);
+	extcon_set_property_capability(chg->extcon, EXTCON_USB_HOST,
+			EXTCON_PROP_USB_TYPEC_POLARITY);
+	extcon_set_property_capability(chg->extcon, EXTCON_USB_HOST,
+			EXTCON_PROP_USB_SS);
+
 	rc = smb2_init_hw(chip);
 	if (rc < 0) {
 		pr_err("Couldn't initialize hardware rc=%d\n", rc);

@@ -4478,6 +4478,14 @@ static void smblib_cc_float_charge_work(struct work_struct *work)
 	if (usb_present
 			&& (chg->typec_mode == POWER_SUPPLY_TYPEC_NONE)
 			&& (chg->cc_float_detected == false)) {
+		if (chg->real_charger_type == POWER_SUPPLY_TYPE_USB ||
+		    chg->real_charger_type == POWER_SUPPLY_TYPE_USB_CDP) {
+			if (!chg->otg_present)
+				smblib_notify_device_mode(chg, true);
+			power_supply_changed(chg->usb_psy);
+			return;
+		}
+
 		chg->cc_float_detected = true;
 		chg->real_charger_type = POWER_SUPPLY_TYPE_USB_DCP;
 		chg->usb_psy_desc.type = POWER_SUPPLY_TYPE_USB_DCP;
@@ -4706,8 +4714,11 @@ void smblib_usb_plugin_locked(struct smb_charger *chg)
 	} else {
 #if defined(CONFIG_MACH_XIAOMI_SDM845)
 		cancel_delayed_work_sync(&chg->typec_reenable_work);
+		cancel_delayed_work_sync(&chg->cc_float_charge_work);
 		cancel_delayed_work_sync(&chg->charger_type_recheck);
 		chg->ignore_recheck_flag = false;
+		chg->cc_float_detected = false;
+		smblib_notify_device_mode(chg, false);
 #endif
 		if (chg->fake_usb_insertion) {
 			chg->fake_usb_insertion = false;
@@ -5225,8 +5236,7 @@ static void smblib_handle_apsd_done(struct smb_charger *chg, bool rising)
 		/* if not DCP, Enable pd here */
 		vote(chg->pd_disallowed_votable_indirect, HVDCP_TIMEOUT_VOTER,
 				false, 0);
-		if (chg->connector_type == POWER_SUPPLY_CONNECTOR_MICRO_USB
-						|| chg->use_extcon)
+		if (!chg->otg_present)
 			smblib_notify_device_mode(chg, true);
 		break;
 	case OCP_CHARGER_BIT:
@@ -5840,11 +5850,13 @@ static void smblib_handle_typec_cc_state_change(struct smb_charger *chg)
 		return;
 
 #if defined(CONFIG_MACH_XIAOMI_SDM845)
-	cancel_delayed_work_sync(&chg->typec_reenable_work);
-	cancel_delayed_work_sync(&chg->cc_float_charge_work);
-#endif
-
 	typec_mode = smblib_get_prop_typec_mode(chg);
+	if (!usb_present || typec_mode != POWER_SUPPLY_TYPEC_NONE)
+		cancel_delayed_work_sync(&chg->typec_reenable_work);
+	cancel_delayed_work_sync(&chg->cc_float_charge_work);
+#else
+	typec_mode = smblib_get_prop_typec_mode(chg);
+#endif
 	if (chg->typec_present && (typec_mode != chg->typec_mode))
 		smblib_handle_rp_change(chg, typec_mode);
 
@@ -6742,34 +6754,33 @@ static void smblib_typec_reenable_work(struct work_struct *work)
 		goto unlock;
 	}
 
-	//0x130E, just bit6 Vbus is set, typec status no change
-	if (stat == TYPEC_VBUS_STATUS_BIT) {
+	if ((stat & TYPEC_VBUS_STATUS_BIT) &&
+	    chg->typec_mode == POWER_SUPPLY_TYPEC_NONE) {
 		smblib_dbg(chg, PR_MISC, "running typec reenable workaround\n");
-	rc = smblib_masked_write(chg,
+		rc = smblib_masked_write(chg,
 				TYPE_C_INTRPT_ENB_SOFTWARE_CTRL_REG,
 				TYPEC_DISABLE_CMD_BIT,
 				TYPEC_DISABLE_CMD_BIT);
-	if (rc < 0)
-		smblib_err(chg, "Couldn't disable type-c rc=%d\n", rc);
+		if (rc < 0)
+			smblib_err(chg, "Couldn't disable type-c rc=%d\n", rc);
 
-	msleep(200);
+		msleep(20);
 
-	rc = smblib_masked_write(chg,
+		rc = smblib_masked_write(chg,
 				TYPE_C_INTRPT_ENB_SOFTWARE_CTRL_REG,
 				TYPEC_DISABLE_CMD_BIT, 0);
-	if (rc < 0)
-		smblib_err(chg, "Couldn't enable type-c rc=%d\n", rc);
+		if (rc < 0)
+			smblib_err(chg, "Couldn't enable type-c rc=%d\n", rc);
 
-	/* wait for type-c detection to complete */
-	//msleep(100);
+		msleep(50);
+		smblib_usb_typec_change(chg);
 	}
 
 unlock:
-	//smblib_usb_typec_change(chg);
 	mutex_unlock(&chg->lock);
 
 	schedule_delayed_work(&chg->cc_float_charge_work,
-					msecs_to_jiffies(200));
+				msecs_to_jiffies(700));
 
 }
 #endif

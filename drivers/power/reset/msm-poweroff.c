@@ -467,62 +467,45 @@ static void halt_spmi_pmic_arbiter(void)
 static void msm_restart_prepare(const char *cmd)
 {
 	bool need_warm_reset = false;
+
 	/* Write download mode flags if we're panic'ing
 	 * Write download mode flags if restart_mode says so
 	 * Kill download mode if master-kill switch is set
 	 */
-
 	set_dload_mode(download_mode &&
 			(in_panic || restart_mode == RESTART_DLOAD));
-
-	if (qpnp_pon_check_hard_reset_stored()) {
-		/* Set warm reset as true when device is in dload mode */
-		if (get_dload_mode() ||
-			((cmd != NULL && cmd[0] != '\0') &&
-			!strcmp(cmd, "edl")))
-			need_warm_reset = true;
-	} else {
-		need_warm_reset = (get_dload_mode() ||
-				(cmd != NULL && cmd[0] != '\0'));
-	}
-
-	if (force_warm_reboot)
-		pr_info("Forcing a warm reset of the system\n");
-
-	if (in_panic)
-		need_warm_reset = true;
-
-	/* Hard reset the PMIC unless memory contents must be maintained. */
-	if (force_warm_reboot || need_warm_reset)
-		qpnp_pon_system_pwr_off(PON_POWER_OFF_WARM_RESET);
-	else
-		qpnp_pon_system_pwr_off(PON_POWER_OFF_HARD_RESET);
 
 	if (cmd != NULL) {
 		if (!strncmp(cmd, "bootloader", 10)) {
 			qpnp_pon_set_restart_reason(
 				PON_RESTART_REASON_BOOTLOADER);
 			__raw_writel(0x77665500, restart_reason);
+			need_warm_reset = true;
 		} else if (!strncmp(cmd, "recovery", 8)) {
 			qpnp_pon_set_restart_reason(
 				PON_RESTART_REASON_RECOVERY);
 			__raw_writel(0x77665502, restart_reason);
+			need_warm_reset = true;
 		} else if (!strcmp(cmd, "rtc")) {
 			qpnp_pon_set_restart_reason(
 				PON_RESTART_REASON_RTC);
 			__raw_writel(0x77665503, restart_reason);
+			need_warm_reset = true;
 		} else if (!strcmp(cmd, "dm-verity device corrupted")) {
 			qpnp_pon_set_restart_reason(
 				PON_RESTART_REASON_DMVERITY_CORRUPTED);
 			__raw_writel(0x77665508, restart_reason);
+			need_warm_reset = true;
 		} else if (!strcmp(cmd, "dm-verity enforcing")) {
 			qpnp_pon_set_restart_reason(
 				PON_RESTART_REASON_DMVERITY_ENFORCE);
 			__raw_writel(0x77665509, restart_reason);
+			need_warm_reset = true;
 		} else if (!strcmp(cmd, "keys clear")) {
 			qpnp_pon_set_restart_reason(
 				PON_RESTART_REASON_KEYS_CLEAR);
 			__raw_writel(0x7766550a, restart_reason);
+			need_warm_reset = true;
 		} else if (!strncmp(cmd, "oem-", 4)) {
 			unsigned long code;
 			int ret;
@@ -531,12 +514,32 @@ static void msm_restart_prepare(const char *cmd)
 			if (!ret)
 				__raw_writel(0x6f656d00 | (code & 0xff),
 					     restart_reason);
+			need_warm_reset = true;
 		} else if (!strncmp(cmd, "edl", 3)) {
 			enable_emergency_dload_mode();
+			need_warm_reset = true;
 		} else {
+			qpnp_pon_set_restart_reason(
+				PON_RESTART_REASON_NORMAL);
 			__raw_writel(0x77665501, restart_reason);
 		}
+	} else {
+		qpnp_pon_set_restart_reason(
+			PON_RESTART_REASON_NORMAL);
+		__raw_writel(0x77665501, restart_reason);
 	}
+
+	if (in_panic || get_dload_mode())
+		need_warm_reset = true;
+
+	if (force_warm_reboot)
+		pr_info("Forcing a warm reset of the system\n");
+
+	/* Hard reset the PMIC unless memory contents must be maintained. */
+	if (force_warm_reboot || need_warm_reset)
+		qpnp_pon_system_pwr_off(PON_POWER_OFF_WARM_RESET);
+	else
+		qpnp_pon_system_pwr_off(PON_POWER_OFF_HARD_RESET);
 
 	flush_cache_all();
 

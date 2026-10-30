@@ -3851,26 +3851,45 @@ static int psy_changed(struct notifier_block *nb, unsigned long evt, void *ptr)
 	}
 
 	/* Don't proceed if PE_START=0; start USB directly if needed */
-	if (!val.intval && !pd->pd_connected &&
-			typec_mode >= POWER_SUPPLY_TYPEC_SOURCE_DEFAULT) {
+	if (!val.intval && !pd->pd_connected) {
+		int real_type;
+		bool vbus_present;
+
 		ret = power_supply_get_property(pd->usb_psy,
 				POWER_SUPPLY_PROP_REAL_TYPE, &val);
 		if (ret) {
-			usbpd_err(&pd->dev, "Unable to read USB TYPE: %d\n",
+			usbpd_err(&pd->dev, "Unable to read USB REAL_TYPE: %d\n",
 					ret);
 			return ret;
 		}
+		real_type = val.intval;
 
-		if (val.intval == POWER_SUPPLY_TYPE_USB ||
-			val.intval == POWER_SUPPLY_TYPE_USB_CDP ||
-			val.intval == POWER_SUPPLY_TYPE_USB_FLOAT) {
-			usbpd_dbg(&pd->dev, "typec mode:%d type:%d\n",
-				typec_mode, val.intval);
-			pd->typec_mode = typec_mode;
+		ret = power_supply_get_property(pd->usb_psy,
+				POWER_SUPPLY_PROP_PRESENT, &val);
+		if (ret) {
+			usbpd_err(&pd->dev, "Unable to read USB PRESENT: %d\n",
+					ret);
+			return ret;
+		}
+		vbus_present = !!val.intval;
+
+		if (vbus_present &&
+		    (typec_mode >= POWER_SUPPLY_TYPEC_SOURCE_DEFAULT ||
+		     real_type == POWER_SUPPLY_TYPE_USB ||
+		     real_type == POWER_SUPPLY_TYPE_USB_CDP) &&
+		    (real_type == POWER_SUPPLY_TYPE_USB ||
+		     real_type == POWER_SUPPLY_TYPE_USB_CDP ||
+		     real_type == POWER_SUPPLY_TYPE_USB_FLOAT)) {
+			usbpd_dbg(&pd->dev, "typec mode:%d type:%d, start periph\n",
+				typec_mode, real_type);
+			pd->typec_mode = (typec_mode == POWER_SUPPLY_TYPEC_NONE) ?
+				POWER_SUPPLY_TYPEC_SOURCE_DEFAULT : typec_mode;
 			queue_work(pd->wq, &pd->start_periph_work);
 		}
 
-		return 0;
+		if (vbus_present || (pd->typec_mode == POWER_SUPPLY_TYPEC_NONE &&
+				     typec_mode == POWER_SUPPLY_TYPEC_NONE))
+			return 0;
 	}
 
 	ret = power_supply_get_property(pd->usb_psy,
@@ -3881,6 +3900,16 @@ static int psy_changed(struct notifier_block *nb, unsigned long evt, void *ptr)
 	}
 
 	pd->vbus_present = val.intval;
+
+	if (!pd->vbus_present && pd->typec_mode != POWER_SUPPLY_TYPEC_NONE &&
+	    typec_mode == POWER_SUPPLY_TYPEC_NONE) {
+		usbpd_dbg(&pd->dev, "disconnect: typec mode:%d\n", typec_mode);
+		pd->typec_mode = typec_mode;
+		ret = usbpd_process_typec_mode(pd, typec_mode);
+		if (ret)
+			kick_sm(pd, 0);
+		return 0;
+	}
 
 	/*
 	 * For sink hard reset, state machine needs to know when VBUS changes

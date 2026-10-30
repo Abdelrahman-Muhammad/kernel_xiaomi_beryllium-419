@@ -1,0 +1,116 @@
+name: Build Kernel
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - 17.0-dev
+
+jobs:
+  build:
+    name: Build Kernel (beryllium)
+    runs-on: ubuntu-22.04
+
+    steps:
+      - name: Checkout Kernel Source
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Set up Build Environment
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            bc \
+            bison \
+            ca-certificates \
+            curl \
+            flex \
+            gcc \
+            git \
+            libssl-dev \
+            lld \
+            make \
+            openssl \
+            python-is-python3 \
+            python3 \
+            xz-utils \
+            zip \
+            libelf-dev
+
+      - name: Download Toolchains
+        run: |
+          # AOSP Clang r487747c
+          mkdir -p "$GITHUB_WORKSPACE/clang"
+          curl -sSL "https://kali.download/nethunter-images/toolchains/clang-r487747c.tar.gz" | tar -xz -C "$GITHUB_WORKSPACE/clang"
+
+          # GCC 4.9 AArch64 (64-bit)
+          mkdir -p "$GITHUB_WORKSPACE/gcc64"
+          curl -sSL "https://android.googlesource.com/platform/prebuilts/gcc/linux-x86/aarch64/aarch64-linux-android-4.9/+archive/refs/heads/pie-release-2.tar.gz" | tar -xz -C "$GITHUB_WORKSPACE/gcc64"
+
+          # GCC 4.9 ARM (32-bit)
+          mkdir -p "$GITHUB_WORKSPACE/gcc32"
+          curl -sSL "https://android.googlesource.com/platform/prebuilts/gcc/linux-x86/arm/arm-linux-androideabi-4.9/+archive/refs/heads/pie-release-2.tar.gz" | tar -xz -C "$GITHUB_WORKSPACE/gcc32"
+
+      - name: Configure Kernel
+        run: |
+          export PATH="$GITHUB_WORKSPACE/clang/bin:$GITHUB_WORKSPACE/gcc64/bin:$GITHUB_WORKSPACE/gcc32/bin:$PATH"
+
+          mkdir -p out
+          ARCH=arm64 ./scripts/kconfig/merge_config.sh -m -O out \
+            arch/arm64/configs/vendor/sdm845-perf_defconfig \
+            arch/arm64/configs/vendor/xiaomi/sdm845-common.config \
+            arch/arm64/configs/vendor/xiaomi/beryllium.config
+
+          make -j$(nproc --all) O=out \
+            ARCH=arm64 \
+            SUBARCH=arm64 \
+            CC=clang \
+            CLANG_TRIPLE=aarch64-linux-gnu- \
+            CROSS_COMPILE=aarch64-linux-android- \
+            CROSS_COMPILE_ARM32=arm-linux-androideabi- \
+            olddefconfig
+
+      - name: Build Kernel
+        run: |
+          export PATH="$GITHUB_WORKSPACE/clang/bin:$GITHUB_WORKSPACE/gcc64/bin:$GITHUB_WORKSPACE/gcc32/bin:$PATH"
+
+          make -j$(nproc --all) O=out \
+            ARCH=arm64 \
+            SUBARCH=arm64 \
+            CC=clang \
+            CLANG_TRIPLE=aarch64-linux-gnu- \
+            CROSS_COMPILE=aarch64-linux-android- \
+            CROSS_COMPILE_ARM32=arm-linux-androideabi- \
+            Image.gz-dtb
+
+      - name: Package AnyKernel3
+        run: |
+          git clone --depth=1 https://github.com/osm0sis/AnyKernel3.git -b master AnyKernel3
+          cd AnyKernel3
+
+          # Configure anykernel.sh for Poco F1 (beryllium)
+          sed -i 's/device.name1=.*/device.name1=beryllium/' anykernel.sh
+          sed -i 's/device.name2=.*/device.name2=Poco F1/' anykernel.sh
+          sed -i 's/device.name3=.*/device.name3=/' anykernel.sh
+          sed -i 's/device.name4=.*/device.name4=/' anykernel.sh
+          sed -i 's/device.name5=.*/device.name5=/' anykernel.sh
+          sed -i 's|BLOCK=.*|BLOCK=/dev/block/bootdevice/by-name/boot;|' anykernel.sh
+          sed -i 's/IS_SLOT_DEVICE=.*/IS_SLOT_DEVICE=0;/' anykernel.sh
+
+          # Remove sample device modifications between dump_boot and write_boot
+          sed -i '/backup_file init.rc/,/append_file fstab.tuna "usbdisk" fstab;/d' anykernel.sh
+
+          # Copy compiled kernel image
+          cp ../out/arch/arm64/boot/Image.gz-dtb .
+
+          # Create flashable zip
+          zip -r9 ../AnyKernel3-beryllium-4.19.zip * -x .git README.md *placeholder
+          cd ..
+
+      - name: Upload Kernel Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: AnyKernel3-beryllium-4.19
+          path: AnyKernel3-beryllium-4.19.zip
+          if-no-files-found: error
