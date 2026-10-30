@@ -16,6 +16,9 @@
 #include <linux/pm.h>
 #include <linux/delay.h>
 #include <linux/input/qpnp-power-on.h>
+#ifndef PON_RESTART_REASON_NORMAL
+#define PON_RESTART_REASON_NORMAL	PON_RESTART_REASON_UNKNOWN
+#endif
 #include <linux/of_address.h>
 
 #include <asm/cacheflush.h>
