@@ -68,6 +68,11 @@ jobs:
             arch/arm64/configs/vendor/xiaomi/sdm845-common.config \
             arch/arm64/configs/vendor/xiaomi/beryllium.config
 
+          ./scripts/config --file out/.config \
+            -e CONFIG_KSU \
+            -d CONFIG_KSU_MANUAL_HOOK \
+            -e CONFIG_KSU_SYSCALL_TABLE_HOOK
+
           make -j$(nproc --all) O=out \
             ARCH=arm64 \
             SUBARCH=arm64 \
@@ -76,6 +81,10 @@ jobs:
             CROSS_COMPILE=aarch64-linux-android- \
             CROSS_COMPILE_ARM32=arm-linux-androideabi- \
             olddefconfig
+
+          echo "=== Verifying KernelSU Configuration ==="
+          grep -E "CONFIG_KSU" out/.config || true
+          grep -q "CONFIG_KSU_SYSCALL_TABLE_HOOK=y" out/.config || (echo "ERROR: CONFIG_KSU_SYSCALL_TABLE_HOOK is not set!" && exit 1)
 
       - name: Build Kernel
         run: |
