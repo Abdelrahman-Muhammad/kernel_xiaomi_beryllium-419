@@ -2786,6 +2786,8 @@ static void handle_state_snk_wait_for_capabilities(struct usbpd *pd,
 		val.intval = POWER_SUPPLY_PD_INACTIVE;
 		power_supply_set_property(pd->usb_psy,
 				POWER_SUPPLY_PROP_PD_ACTIVE, &val);
+
+		start_usb_peripheral(pd);
 	}
 }
 

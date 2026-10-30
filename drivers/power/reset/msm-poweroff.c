@@ -76,6 +76,7 @@ static void *emergency_dload_mode_addr;
 static bool scm_dload_supported;
 
 static bool force_warm_reboot;
+static void (*orig_pm_restart)(enum reboot_mode reboot_mode, const char *cmd);
 
 /* interface for exporting attributes */
 struct reset_attribute {
@@ -594,7 +595,14 @@ static void do_msm_restart(enum reboot_mode reboot_mode, const char *cmd)
 	halt_spmi_pmic_arbiter();
 	deassert_ps_hold();
 
-	msleep(10000);
+	mdelay(250);
+
+	if (orig_pm_restart)
+		orig_pm_restart(reboot_mode, cmd);
+
+	do_kernel_restart((char *)cmd);
+
+	while (1);
 }
 
 static void do_msm_poweroff(void)
@@ -644,6 +652,7 @@ static int msm_restart_probe(struct platform_device *pdev)
 	if (mem)
 		tcsr_boot_misc_detect = mem->start;
 
+	orig_pm_restart = arm_pm_restart;
 	pm_power_off = do_msm_poweroff;
 	arm_pm_restart = do_msm_restart;
 
