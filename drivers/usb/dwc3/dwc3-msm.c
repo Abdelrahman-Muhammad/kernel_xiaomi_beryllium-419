@@ -341,6 +341,8 @@ struct dwc3_msm {
 
 	struct extcon_nb	*extcon;
 	int			ext_idx;
+	int			num_extcons;
+	int			lpm_wait_count;
 	struct notifier_block	host_nb;
 
 	atomic_t                in_p3;
@@ -3011,9 +3013,33 @@ static void dwc3_resume_work(struct work_struct *w)
 	if (mdwc->extcon && mdwc->vbus_active && !mdwc->in_restart) {
 		extcon_id = EXTCON_USB;
 		edev = mdwc->extcon[mdwc->ext_idx].edev;
+		if (edev && !extcon_get_state(edev, extcon_id)) {
+			int i;
+
+			for (i = 0; i < mdwc->num_extcons; i++) {
+				if (mdwc->extcon[i].edev &&
+				    extcon_get_state(mdwc->extcon[i].edev, extcon_id)) {
+					mdwc->ext_idx = i;
+					edev = mdwc->extcon[i].edev;
+					break;
+				}
+			}
+		}
 	} else if (mdwc->extcon && mdwc->id_state == DWC3_ID_GROUND) {
 		extcon_id = EXTCON_USB_HOST;
 		edev = mdwc->extcon[mdwc->ext_idx].edev;
+		if (edev && !extcon_get_state(edev, extcon_id)) {
+			int i;
+
+			for (i = 0; i < mdwc->num_extcons; i++) {
+				if (mdwc->extcon[i].edev &&
+				    extcon_get_state(mdwc->extcon[i].edev, extcon_id)) {
+					mdwc->ext_idx = i;
+					edev = mdwc->extcon[i].edev;
+					break;
+				}
+			}
+		}
 	}
 
 	if (edev) {
@@ -3409,7 +3435,6 @@ static int dwc3_msm_vbus_notifier(struct notifier_block *nb,
 	}
 
 	dwc = platform_get_drvdata(mdwc->dwc3);
-	mdwc->ext_idx = enb->idx;
 
 	dbg_event(0xFF, "extcon idx", enb->idx);
 	dev_dbg(mdwc->dev, "vbus:%ld event received\n", event);
@@ -3424,6 +3449,9 @@ static int dwc3_msm_vbus_notifier(struct notifier_block *nb,
 		mdwc->eud_active = event;
 		mdwc->check_eud_state = true;
 	} else {
+		if (mdwc->vbus_active == event && mdwc->ext_idx == enb->idx)
+			return NOTIFY_DONE;
+		mdwc->ext_idx = enb->idx;
 		if (mdwc->vbus_active == event)
 			return NOTIFY_DONE;
 		mdwc->vbus_active = event;
@@ -3463,6 +3491,8 @@ static int dwc3_msm_extcon_register(struct dwc3_msm *mdwc)
 					sizeof(*mdwc->extcon), GFP_KERNEL);
 	if (!mdwc->extcon)
 		return -ENOMEM;
+
+	mdwc->num_extcons = extcon_cnt;
 
 	for (idx = 0; idx < extcon_cnt; idx++) {
 		edev = extcon_get_edev_by_phandle(mdwc->dev, idx);
@@ -4764,8 +4794,19 @@ static void dwc3_otg_sm_work(struct work_struct *w)
 		/* fall-through */
 	case DRD_STATE_IDLE:
 		if (test_bit(WAIT_FOR_LPM, &mdwc->inputs)) {
-			dev_dbg(mdwc->dev, "still not in lpm, wait.\n");
-			break;
+			if (++mdwc->lpm_wait_count > 5) {
+				dev_warn(mdwc->dev, "LPM wait timeout, clearing WAIT_FOR_LPM\n");
+				clear_bit(WAIT_FOR_LPM, &mdwc->inputs);
+				mdwc->lpm_wait_count = 0;
+			} else {
+				dev_dbg(mdwc->dev, "still not in lpm, wait (retry %d/5).\n",
+					mdwc->lpm_wait_count);
+				queue_delayed_work(mdwc->dwc3_wq, &mdwc->sm_work,
+						msecs_to_jiffies(200));
+				break;
+			}
+		} else {
+			mdwc->lpm_wait_count = 0;
 		}
 
 		if (!test_bit(ID, &mdwc->inputs)) {

@@ -5,6 +5,7 @@ on:
   push:
     branches:
       - 17.0-dev
+      - 17.0
 
 jobs:
   build:
@@ -57,6 +58,8 @@ jobs:
       - name: Setup KernelSU-Next
         run: |
           curl -LSs "https://raw.githubusercontent.com/KernelSU-Next/KernelSU-Next/next/kernel/setup.sh" | bash -s legacy
+          sed -i 's@^#if LINUX_VERSION_CODE < KERNEL_VERSION(5, 8, 0)$@#if 0 /* 4.19-CIP already provides copy_to_kernel_nofault() */@' \
+            drivers/kernelsu/hook/patch_memory.c
 
       - name: Configure Kernel
         run: |
@@ -69,8 +72,11 @@ jobs:
             arch/arm64/configs/vendor/xiaomi/beryllium.config
 
           ./scripts/config --file out/.config \
+            -e CONFIG_KALLSYMS \
+            -e CONFIG_KALLSYMS_ALL \
             -e CONFIG_KSU \
             -d CONFIG_KSU_MANUAL_HOOK \
+            -d CONFIG_KSU_KPROBES_HOOK \
             -e CONFIG_KSU_SYSCALL_TABLE_HOOK
 
           make -j$(nproc --all) O=out \
@@ -97,6 +103,8 @@ jobs:
             CLANG_TRIPLE=aarch64-linux-gnu- \
             CROSS_COMPILE=aarch64-linux-android- \
             CROSS_COMPILE_ARM32=arm-linux-androideabi- \
+            KSU_VERSION_OVERRIDE=33355 \
+            KSU_VERSION_TAG_OVERRIDE=v3.4.2 \
             Image.gz-dtb
 
       - name: Package AnyKernel3

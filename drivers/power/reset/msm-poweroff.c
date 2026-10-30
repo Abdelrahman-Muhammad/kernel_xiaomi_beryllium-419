@@ -20,6 +20,7 @@
 #define PON_RESTART_REASON_NORMAL	PON_RESTART_REASON_UNKNOWN
 #endif
 #include <linux/of_address.h>
+#include <linux/psci.h>
 
 #include <asm/cacheflush.h>
 #include <asm/system_misc.h>
@@ -580,9 +581,10 @@ static void deassert_ps_hold(void)
 
 static void do_msm_restart(enum reboot_mode reboot_mode, const char *cmd)
 {
-	pr_notice("Going down for restart now\n");
+	pr_emerg("RSTRT: do_msm_restart enter cmd=%s mode=%d\n", cmd ? cmd : "(null)", reboot_mode);
 
 	msm_restart_prepare(cmd);
+	pr_emerg("RSTRT: msm_restart_prepare done\n");
 
 	/*
 	 * Trigger a watchdog bite here and if this fails,
@@ -592,17 +594,34 @@ static void do_msm_restart(enum reboot_mode reboot_mode, const char *cmd)
 		msm_trigger_wdog_bite();
 
 	scm_disable_sdi();
+	pr_emerg("RSTRT: scm_disable_sdi done\n");
+
 	halt_spmi_pmic_arbiter();
+	pr_emerg("RSTRT: halt_spmi_pmic_arbiter done\n");
+
 	deassert_ps_hold();
+	pr_emerg("RSTRT: deassert_ps_hold done\n");
 
 	mdelay(250);
 
-	if (orig_pm_restart)
-		orig_pm_restart(reboot_mode, cmd);
+	/* Stage 2 fallback: direct write to msm_ps_hold */
+	pr_emerg("RSTRT: PS_HOLD fallback: direct write\n");
+	if (msm_ps_hold)
+		__raw_writel(0, msm_ps_hold);
+	mdelay(250);
 
-	do_kernel_restart((char *)cmd);
+	/* Stage 3 fallback: PSCI system reset */
+	pr_emerg("RSTRT: PS_HOLD fallback: psci_force_system_reset\n");
+	psci_force_system_reset();
+	mdelay(250);
 
-	while (1);
+	/* Stage 4 fallback: trigger watchdog bite */
+	pr_emerg("RSTRT: PS_HOLD fallback: watchdog bite\n");
+	msm_trigger_wdog_bite();
+
+	pr_emerg("RSTRT: all reset stages failed, spinning\n");
+	while (1)
+		mdelay(1000);
 }
 
 static void do_msm_poweroff(void)

@@ -53,8 +53,10 @@ extern struct psci_operations psci_ops;
 
 #if defined(CONFIG_ARM_PSCI_FW)
 int __init psci_dt_init(void);
+int psci_force_system_reset(void);
 #else
 static inline int psci_dt_init(void) { return 0; }
+static inline int psci_force_system_reset(void) { return -ENODEV; }
 #endif
 
 #if defined(CONFIG_ARM_PSCI_FW) && defined(CONFIG_ACPI)

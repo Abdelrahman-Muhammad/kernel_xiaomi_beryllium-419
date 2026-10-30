@@ -16,6 +16,7 @@
 #include <linux/syscalls.h>
 #include <linux/syscore_ops.h>
 #include <linux/uaccess.h>
+#include <linux/timer.h>
 
 /*
  * this indicates whether you can reboot with ctrl-alt-del: the default is yes
@@ -231,6 +232,15 @@ void migrate_to_reboot_cpu(void)
 	set_cpus_allowed_ptr(current, cpumask_of(cpu));
 }
 
+static struct timer_list reboot_emerg_timer;
+static char reboot_emerg_cmd[128];
+
+static void reboot_emerg_timeout(struct timer_list *t)
+{
+	pr_emerg("RSTRT: device_shutdown hung >3s, forcing emergency machine_restart!\n");
+	machine_restart(reboot_emerg_cmd[0] ? reboot_emerg_cmd : NULL);
+}
+
 /**
  *	kernel_restart - reboot the system
  *	@cmd: pointer to buffer containing command to execute for restart
@@ -241,7 +251,22 @@ void migrate_to_reboot_cpu(void)
  */
 void kernel_restart(char *cmd)
 {
+	pr_emerg("RSTRT: kernel_restart enter cmd=%s\n", cmd ? cmd : "(null)");
+
+	if (cmd)
+		strlcpy(reboot_emerg_cmd, cmd, sizeof(reboot_emerg_cmd));
+	else
+		reboot_emerg_cmd[0] = '\0';
+
+	timer_setup(&reboot_emerg_timer, reboot_emerg_timeout, 0);
+	mod_timer(&reboot_emerg_timer, jiffies + msecs_to_jiffies(3000));
+
 	kernel_restart_prepare(cmd);
+
+	del_timer_sync(&reboot_emerg_timer);
+
+	pr_emerg("RSTRT: device_shutdown completed\n");
+
 	migrate_to_reboot_cpu();
 	syscore_shutdown();
 	if (!cmd)

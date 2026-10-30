@@ -282,6 +282,15 @@ static void psci_sys_reset(enum reboot_mode reboot_mode, const char *cmd)
 	}
 }
 
+int psci_force_system_reset(void)
+{
+	if (!invoke_psci_fn)
+		return -ENODEV;
+	invoke_psci_fn(PSCI_0_2_FN_SYSTEM_RESET, 0, 0, 0);
+	return 0;
+}
+EXPORT_SYMBOL(psci_force_system_reset);
+
 static void psci_sys_poweroff(void)
 {
 	invoke_psci_fn(PSCI_0_2_FN_SYSTEM_OFF, 0, 0, 0);

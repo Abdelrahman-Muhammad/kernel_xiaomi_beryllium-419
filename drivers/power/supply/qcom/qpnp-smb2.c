@@ -3107,6 +3107,8 @@ static int smb2_probe(struct platform_device *pdev)
 			EXTCON_PROP_USB_TYPEC_POLARITY);
 	extcon_set_property_capability(chg->extcon, EXTCON_USB,
 			EXTCON_PROP_USB_SS);
+	extcon_set_property_capability(chg->extcon, EXTCON_USB,
+			EXTCON_PROP_USB_TYPEC_MED_HIGH_CURRENT);
 	extcon_set_property_capability(chg->extcon, EXTCON_USB_HOST,
 			EXTCON_PROP_USB_TYPEC_POLARITY);
 	extcon_set_property_capability(chg->extcon, EXTCON_USB_HOST,
