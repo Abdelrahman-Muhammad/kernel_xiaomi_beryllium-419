@@ -34,6 +34,7 @@
 #if defined(CONFIG_MACH_XIAOMI_SDM845)
 static bool off_charge_flag;
 static void smblib_wireless_set_enable(struct smb_charger *chg, int enable);
+static void smblib_notify_device_mode(struct smb_charger *chg, bool enable);
 #endif
 
 static bool is_secure(struct smb_charger *chg, int addr)
