@@ -5542,8 +5542,11 @@ static void typec_sink_insertion(struct smb_charger *chg)
 	vote(chg->pd_disallowed_votable_indirect, HVDCP_TIMEOUT_VOTER,
 			false, 0);
 	if (chg->use_extcon) {
-		smblib_notify_usb_host(chg, true);
-		chg->otg_present = true;
+		if (typec_mode != POWER_SUPPLY_TYPEC_NONE &&
+		    typec_mode != POWER_SUPPLY_TYPEC_NON_COMPLIANT) {
+			smblib_notify_usb_host(chg, true);
+			chg->otg_present = true;
+		}
 	}
 }
 

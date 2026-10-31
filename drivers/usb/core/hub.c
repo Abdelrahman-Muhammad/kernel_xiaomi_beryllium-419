@@ -1041,10 +1041,16 @@ static void hub_activate(struct usb_hub *hub, enum hub_activation_type type)
 
 	/* Continue a partial initialization */
 	if (type == HUB_INIT2 || type == HUB_INIT3) {
-		device_lock(&hdev->dev);
+		while (!device_trylock(&hdev->dev)) {
+			if (hub->disconnected || hub->quiescing) {
+				kref_put(&hub->kref, hub_release);
+				return;
+			}
+			msleep(10);
+		}
 
 		/* Was the hub disconnected while we were waiting? */
-		if (hub->disconnected)
+		if (hub->disconnected || hub->quiescing)
 			goto disconnected;
 		if (type == HUB_INIT2)
 			goto init2;
@@ -1362,6 +1368,7 @@ static void hub_quiesce(struct usb_hub *hub, enum hub_quiescing_type type)
 	}
 
 	/* Stop hub_wq and related activity */
+	cancel_delayed_work(&hub->init_work);
 	flush_delayed_work(&hub->init_work);
 	usb_kill_urb(hub->urb);
 	if (hub->has_indicators)
