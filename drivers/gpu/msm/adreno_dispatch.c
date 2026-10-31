@@ -2309,11 +2309,9 @@ static int dispatcher_do_fault(struct adreno_device *adreno_dev)
 
 	mutex_unlock(&device->mutex);
 
-	/* If adreno_reset() fails, log a warning but don't panic the system */
-	if (WARN_ON(ret)) {
-		atomic_set(&dispatcher->fault, 0);
-		return 1;
-	}
+	/* If adreno_reset() fails, log a warning once and proceed with queue recovery */
+	if (WARN_ON_ONCE(ret))
+		dev_err(device->dev, "Dispatcher fault reset failed %d\n", ret);
 
 	/* if any other fault got in until reset then ignore */
 	atomic_set(&dispatcher->fault, 0);

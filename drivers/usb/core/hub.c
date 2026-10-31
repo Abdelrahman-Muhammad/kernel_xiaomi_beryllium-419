@@ -1043,6 +1043,8 @@ static void hub_activate(struct usb_hub *hub, enum hub_activation_type type)
 	if (type == HUB_INIT2 || type == HUB_INIT3) {
 		while (!device_trylock(&hdev->dev)) {
 			if (hub->disconnected || hub->quiescing) {
+				usb_autopm_put_interface_async(
+					to_usb_interface(hub->intfdev));
 				kref_put(&hub->kref, hub_release);
 				return;
 			}
@@ -1368,7 +1370,6 @@ static void hub_quiesce(struct usb_hub *hub, enum hub_quiescing_type type)
 	}
 
 	/* Stop hub_wq and related activity */
-	cancel_delayed_work(&hub->init_work);
 	flush_delayed_work(&hub->init_work);
 	usb_kill_urb(hub->urb);
 	if (hub->has_indicators)

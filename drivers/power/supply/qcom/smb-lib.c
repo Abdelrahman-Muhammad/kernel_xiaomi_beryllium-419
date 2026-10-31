@@ -5536,10 +5536,8 @@ static void typec_sink_insertion(struct smb_charger *chg)
 	}
 
 	typec_mode = smblib_get_prop_typec_mode(chg);
-	if (typec_mode == POWER_SUPPLY_TYPEC_NONE) {
-		smblib_usb_typec_change(chg);
+	if (typec_mode == POWER_SUPPLY_TYPEC_NONE)
 		return;
-	}
 	if (typec_mode == POWER_SUPPLY_TYPEC_SINK_AUDIO_ADAPTER)
 		chg->is_audio_adapter = true;
 

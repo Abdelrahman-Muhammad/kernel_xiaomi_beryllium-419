@@ -20,7 +20,6 @@
 #define PON_RESTART_REASON_NORMAL	PON_RESTART_REASON_UNKNOWN
 #endif
 #include <linux/of_address.h>
-#include <linux/psci.h>
 
 #include <asm/cacheflush.h>
 #include <asm/system_misc.h>
@@ -602,21 +601,11 @@ static void do_msm_restart(enum reboot_mode reboot_mode, const char *cmd)
 	deassert_ps_hold();
 	pr_emerg("RSTRT: deassert_ps_hold done\n");
 
-	mdelay(250);
+	/* Allow PMIC hardware reset sequence to complete */
+	mdelay(1000);
 
-	/* Stage 2 fallback: direct write to msm_ps_hold */
-	pr_emerg("RSTRT: PS_HOLD fallback: direct write\n");
-	if (msm_ps_hold)
-		__raw_writel(0, msm_ps_hold);
-	mdelay(250);
-
-	/* Stage 3 fallback: PSCI system reset */
-	pr_emerg("RSTRT: PS_HOLD fallback: psci_force_system_reset\n");
-	psci_force_system_reset();
-	mdelay(250);
-
-	/* Stage 4 fallback: trigger watchdog bite */
-	pr_emerg("RSTRT: PS_HOLD fallback: watchdog bite\n");
+	/* Last resort fallback: trigger hardware watchdog bite */
+	pr_emerg("RSTRT: PS_HOLD failed, triggering watchdog bite\n");
 	msm_trigger_wdog_bite();
 
 	pr_emerg("RSTRT: all reset stages failed, spinning\n");

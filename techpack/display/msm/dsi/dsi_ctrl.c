@@ -327,7 +327,10 @@ static void dsi_ctrl_dma_cmd_wait_for_done(struct work_struct *work)
 	if (atomic_read(&dsi_ctrl->dma_irq_trig))
 		goto done;
 
-	if (system_state >= SYSTEM_HALT)
+	/* Interrupts/CPUs may already be inactive during shutdown: don't wait long */
+	if (system_state == SYSTEM_HALT ||
+	    system_state == SYSTEM_POWER_OFF ||
+	    system_state == SYSTEM_RESTART)
 		timeout_ms = 20;
 
 	ret = wait_for_completion_timeout(
