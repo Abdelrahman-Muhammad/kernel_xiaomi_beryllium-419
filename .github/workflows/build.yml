@@ -62,6 +62,8 @@ jobs:
             drivers/kernelsu/hook/patch_memory.c
           sed -i 's@defined(KSU_HAS_PATH_UMOUNT)@0@g' drivers/kernelsu/feature/kernel_umount.c
           sed -i 's@ccflags-y += -DKSU_HAS_PATH_UMOUNT@# ccflags-y += -DKSU_HAS_PATH_UMOUNT@g' drivers/kernelsu/Kbuild
+          sed -i '/manager_identity.h/a #include "manager/throne_tracker.h"' drivers/kernelsu/supercall/supercall.c
+          sed -i '/if (magic2 == KSU_INSTALL_MAGIC2) {/a \		if (!ksu_is_manager_appid_valid()) track_throne(false);' drivers/kernelsu/supercall/supercall.c
 
       - name: Configure Kernel
         run: |
@@ -107,6 +109,7 @@ jobs:
             CROSS_COMPILE_ARM32=arm-linux-androideabi- \
             KSU_VERSION_OVERRIDE=33355 \
             KSU_VERSION_TAG_OVERRIDE=v3.4.2 \
+            KSU_MANAGER_PACKAGE=com.rifsxd.ksunext \
             Image.gz-dtb
 
       - name: Package AnyKernel3
