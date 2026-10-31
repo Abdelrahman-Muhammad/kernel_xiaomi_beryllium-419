@@ -527,8 +527,7 @@ static int smb2_parse_dt(struct smb2 *chip)
 	chip->dt.auto_recharge_soc = of_property_read_bool(node,
 						"qcom,auto-recharge-soc");
 
-	chg->use_extcon = of_property_read_bool(node,
-						"qcom,use-extcon");
+	chg->use_extcon = true;
 
 	chg->dcp_icl_ua = chip->dt.usb_icl_ua;
 

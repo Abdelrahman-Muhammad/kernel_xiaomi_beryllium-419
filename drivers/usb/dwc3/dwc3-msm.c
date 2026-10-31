@@ -3449,10 +3449,11 @@ static int dwc3_msm_vbus_notifier(struct notifier_block *nb,
 		mdwc->eud_active = event;
 		mdwc->check_eud_state = true;
 	} else {
-		if (mdwc->vbus_active == event && mdwc->ext_idx == enb->idx)
+		if (mdwc->vbus_active == event && mdwc->ext_idx == enb->idx &&
+		    !(event && atomic_read(&dwc->in_lpm)))
 			return NOTIFY_DONE;
 		mdwc->ext_idx = enb->idx;
-		if (mdwc->vbus_active == event)
+		if (mdwc->vbus_active == event && !(event && atomic_read(&dwc->in_lpm)))
 			return NOTIFY_DONE;
 		mdwc->vbus_active = event;
 	}

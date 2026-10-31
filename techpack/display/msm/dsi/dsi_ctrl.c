@@ -4,6 +4,7 @@
  */
 
 #include <linux/of_device.h>
+#include <linux/kernel.h>
 #include <linux/err.h>
 #include <linux/regulator/consumer.h>
 #include <linux/clk.h>
@@ -313,6 +314,7 @@ static void dsi_ctrl_dma_cmd_wait_for_done(struct work_struct *work)
 	u32 status;
 	u32 mask = DSI_CMD_MODE_DMA_DONE;
 	struct dsi_ctrl_hw_ops dsi_hw_ops;
+	unsigned long timeout_ms = DSI_CTRL_TX_TO_MS;
 
 	dsi_ctrl = container_of(work, struct dsi_ctrl, dma_cmd_wait);
 	dsi_hw_ops = dsi_ctrl->hw.ops;
@@ -325,9 +327,12 @@ static void dsi_ctrl_dma_cmd_wait_for_done(struct work_struct *work)
 	if (atomic_read(&dsi_ctrl->dma_irq_trig))
 		goto done;
 
+	if (system_state >= SYSTEM_HALT)
+		timeout_ms = 20;
+
 	ret = wait_for_completion_timeout(
 			&dsi_ctrl->irq_info.cmd_dma_done,
-			msecs_to_jiffies(DSI_CTRL_TX_TO_MS));
+			msecs_to_jiffies(timeout_ms));
 	if (ret == 0 && !atomic_read(&dsi_ctrl->dma_irq_trig)) {
 		status = dsi_hw_ops.get_interrupt_status(&dsi_ctrl->hw);
 		if (status & mask) {
