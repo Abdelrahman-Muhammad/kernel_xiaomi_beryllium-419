@@ -3402,6 +3402,9 @@ static int smblib_get_prop_dfp_mode(struct smb_charger *chg)
 
 static int smblib_get_prop_typec_mode(struct smb_charger *chg)
 {
+	if (!(chg->typec_status[3] & CC_ATTACHED_BIT))
+		return POWER_SUPPLY_TYPEC_NONE;
+
 	if (chg->typec_status[3] & UFP_DFP_MODE_STATUS_BIT)
 		return smblib_get_prop_dfp_mode(chg);
 	else
@@ -5496,7 +5499,7 @@ try_wait_src:
 
 	debounce_done = stat & TYPEC_DEBOUNCE_DONE_STATUS_BIT;
 
-	if (debounce_done)
+	if (debounce_done && (stat & CC_ATTACHED_BIT))
 		/* the other side wants to be a sink */
 		exit_mode = ATTACHED_SRC;
 	else
@@ -5533,6 +5536,10 @@ static void typec_sink_insertion(struct smb_charger *chg)
 	}
 
 	typec_mode = smblib_get_prop_typec_mode(chg);
+	if (typec_mode == POWER_SUPPLY_TYPEC_NONE) {
+		smblib_usb_typec_change(chg);
+		return;
+	}
 	if (typec_mode == POWER_SUPPLY_TYPEC_SINK_AUDIO_ADAPTER)
 		chg->is_audio_adapter = true;
 
