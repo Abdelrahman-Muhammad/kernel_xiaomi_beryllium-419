@@ -5531,7 +5531,7 @@ static void typec_sink_insertion(struct smb_charger *chg)
 	exit_mode = typec_try_sink(chg);
 
 	if (exit_mode != ATTACHED_SRC) {
-		smblib_usb_typec_change(chg);
+		chg->typec_present = false;
 		return;
 	}
 
