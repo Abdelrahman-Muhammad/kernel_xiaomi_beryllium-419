@@ -76,7 +76,6 @@ static void *emergency_dload_mode_addr;
 static bool scm_dload_supported;
 
 static bool force_warm_reboot;
-static void (*orig_pm_restart)(enum reboot_mode reboot_mode, const char *cmd);
 
 /* interface for exporting attributes */
 struct reset_attribute {
@@ -580,10 +579,9 @@ static void deassert_ps_hold(void)
 
 static void do_msm_restart(enum reboot_mode reboot_mode, const char *cmd)
 {
-	pr_emerg("RSTRT: do_msm_restart enter cmd=%s mode=%d\n", cmd ? cmd : "(null)", reboot_mode);
+	pr_notice("Going down for restart now\n");
 
 	msm_restart_prepare(cmd);
-	pr_emerg("RSTRT: msm_restart_prepare done\n");
 
 	/*
 	 * Trigger a watchdog bite here and if this fails,
@@ -593,22 +591,17 @@ static void do_msm_restart(enum reboot_mode reboot_mode, const char *cmd)
 		msm_trigger_wdog_bite();
 
 	scm_disable_sdi();
-	pr_emerg("RSTRT: scm_disable_sdi done\n");
-
 	halt_spmi_pmic_arbiter();
-	pr_emerg("RSTRT: halt_spmi_pmic_arbiter done\n");
-
 	deassert_ps_hold();
-	pr_emerg("RSTRT: deassert_ps_hold done\n");
 
 	/* Allow PMIC hardware reset sequence to complete */
 	mdelay(1000);
 
 	/* Last resort fallback: trigger hardware watchdog bite */
-	pr_emerg("RSTRT: PS_HOLD failed, triggering watchdog bite\n");
+	pr_emerg("PS_HOLD reset failed, triggering watchdog bite\n");
 	msm_trigger_wdog_bite();
 
-	pr_emerg("RSTRT: all reset stages failed, spinning\n");
+	pr_emerg("All reset stages failed, spinning\n");
 	while (1)
 		mdelay(1000);
 }
@@ -660,7 +653,6 @@ static int msm_restart_probe(struct platform_device *pdev)
 	if (mem)
 		tcsr_boot_misc_detect = mem->start;
 
-	orig_pm_restart = arm_pm_restart;
 	pm_power_off = do_msm_poweroff;
 	arm_pm_restart = do_msm_restart;
 
