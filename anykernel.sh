@@ -43,7 +43,9 @@ dump_boot; # use split_boot to skip ramdisk unpack, e.g. for devices with init_b
 write_boot; # use flash_boot to skip ramdisk repack, e.g. for devices with init_boot ramdisk
 
 # KernelSU userspace setup
-if [ -f "$home/ksud" ]; then
+ak_home="${AKHOME:-$home}";
+ak_home="${ak_home:-$PWD}";
+if [ -f "$ak_home/ksud" ]; then
   ui_print " ";
   ui_print "- Checking /data for KernelSU userspace...";
   if ! mountpoint -q /data 2>/dev/null && ! grep -q " /data " /proc/mounts 2>/dev/null; then
@@ -68,7 +70,7 @@ if [ -f "$home/ksud" ]; then
       # Non-destructive fallback: only copy ksud if missing
       if [ ! -f /data/adb/ksud ]; then
         ui_print "- Installing ksud...";
-        cp -f "$home/ksud" /data/adb/ksud;
+        cp -f "$ak_home/ksud" /data/adb/ksud;
       else
         ui_print "- Existing ksud found, preserving.";
       fi;
@@ -76,7 +78,7 @@ if [ -f "$home/ksud" ]; then
       # Non-destructive fallback: only copy busybox if missing
       if [ ! -f /data/adb/ksu/bin/busybox ]; then
         ui_print "- Installing busybox...";
-        cp -f "$home/busybox" /data/adb/ksu/bin/busybox;
+        cp -f "$ak_home/busybox" /data/adb/ksu/bin/busybox;
       else
         ui_print "- Existing busybox found, preserving.";
       fi;
