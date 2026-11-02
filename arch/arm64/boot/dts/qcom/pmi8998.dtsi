@@ -795,7 +795,12 @@
 
 		trips {
 			low_vbat: low-vbat {
-				temperature = <3350>;
+				/*
+				 * The fuel gauge cuts off at 3.4 V.  Throttle
+				 * the big cluster above that so a worn cell
+				 * does not sag into UVLO under load.
+				 */
+				temperature = <3500>;
 				hysteresis = <150>;
 				type = "passive";
 			};
