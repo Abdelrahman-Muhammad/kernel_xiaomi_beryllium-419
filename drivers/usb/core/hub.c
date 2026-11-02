@@ -1041,8 +1041,14 @@ static void hub_activate(struct usb_hub *hub, enum hub_activation_type type)
 
 	/* Continue a partial initialization */
 	if (type == HUB_INIT2 || type == HUB_INIT3) {
+		int retries = 200;	/* bounded to avoid an indefinite livelock */
+
 		while (!device_trylock(&hdev->dev)) {
-			if (hub->disconnected || hub->quiescing) {
+			if (hub->disconnected || hub->quiescing ||
+			    --retries == 0) {
+				if (!retries)
+					dev_warn(&hdev->dev,
+						 "hub init lock timeout\n");
 				usb_autopm_put_interface_async(
 					to_usb_interface(hub->intfdev));
 				kref_put(&hub->kref, hub_release);
