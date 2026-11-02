@@ -4,6 +4,12 @@ set -e
 sed -i 's@^#if LINUX_VERSION_CODE < KERNEL_VERSION(5, 8, 0)$@#if 0 /* 4.19-CIP already provides copy_to_kernel_nofault() */@' \
   drivers/kernelsu/hook/patch_memory.c
 
+sed -i '/unsigned long phys_from_virt/i #ifndef pmd_leaf\n#define pmd_leaf(pmd) pmd_sect(pmd)\n#endif\n#ifndef pud_leaf\n#define pud_leaf(pud) pud_sect(pud)\n#endif\n' \
+  drivers/kernelsu/hook/patch_memory.c
+
+sed -i 's@pr_info("handle_setresuid from@pr_debug("handle_setresuid from@g' \
+  drivers/kernelsu/hook/setuid_hook.c
+
 sed -i 's@defined(KSU_HAS_PATH_UMOUNT)@0@g' drivers/kernelsu/feature/kernel_umount.c
 sed -i 's@ccflags-y += -DKSU_HAS_PATH_UMOUNT@# ccflags-y += -DKSU_HAS_PATH_UMOUNT@g' drivers/kernelsu/Kbuild
 
