@@ -28,6 +28,10 @@
 #include <linux/syscalls.h>
 #include <linux/sysctl.h>
 
+#ifdef CONFIG_KSU
+#include <asm/unistd.h>
+#endif
+
 /* Not exposed in headers: strictly internal use only. */
 #define SECCOMP_MODE_DEAD	(SECCOMP_MODE_FILTER + 1)
 
@@ -796,7 +800,13 @@ int __secure_computing(const struct seccomp_data *sd)
 		syscall_get_nr(current, task_pt_regs(current));
 
 #ifdef CONFIG_KSU
-	if (sd && (u32)sd->args[0] == 0xDEADBEEF)
+	/*
+	 * KernelSU supercalls use the magic value as the first argument of
+	 * prctl() and reboot().  Only bypass seccomp for those two syscalls;
+	 * a blanket arg0 check would let an arbitrary filtered syscall through.
+	 */
+	if (sd && (this_syscall == __NR_prctl || this_syscall == __NR_reboot) &&
+	    (u32)sd->args[0] == 0xDEADBEEF)
 		return 0;
 #endif
 
