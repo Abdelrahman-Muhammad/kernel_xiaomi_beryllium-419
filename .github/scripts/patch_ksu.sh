@@ -13,8 +13,12 @@ sed -i 's@pr_info("handle_setresuid from@pr_debug("handle_setresuid from@g' \
 sed -i 's@defined(KSU_HAS_PATH_UMOUNT)@0@g' drivers/kernelsu/feature/kernel_umount.c
 sed -i 's@ccflags-y += -DKSU_HAS_PATH_UMOUNT@# ccflags-y += -DKSU_HAS_PATH_UMOUNT@g' drivers/kernelsu/Kbuild
 
+# Allow spoofed and custom manager APKs by bypassing signature hash check
+sed -i 's@return check_v2_signature.*@return true;@' drivers/kernelsu/manager/apk_sign.c
+
 sed -i '/manager_identity.h/a #include "manager/throne_tracker.h"' drivers/kernelsu/supercall/supercall.c
 sed -i '/if (magic2 == KSU_INSTALL_MAGIC2) {/a \		if (!ksu_is_manager_appid_valid()) track_throne(false);' drivers/kernelsu/supercall/supercall.c
+sed -i '/if (magic2 == KSU_INSTALL_MAGIC2) {/a \		if (!ksu_is_manager_appid_valid() && current_uid().val >= 10000) ksu_set_manager_appid(current_uid().val % 100000);' drivers/kernelsu/supercall/supercall.c
 
 cat << 'EOF' >> drivers/kernelsu/supercall/supercall.c
 
