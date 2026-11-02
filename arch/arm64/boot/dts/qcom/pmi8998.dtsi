@@ -795,19 +795,23 @@
 
 		trips {
 			low_vbat: low-vbat {
-				temperature = <3200>;
-				hysteresis = <100>;
+				temperature = <3350>;
+				hysteresis = <150>;
 				type = "passive";
 			};
 		};
 		cooling-maps {
 			vbat_cpu4 {
 				trip = <&low_vbat>;
-				cooling-device = <&cpu4_isolate 1 1>;
+				cooling-device =
+					<&CPU4 THERMAL_MAX_LIMIT
+						THERMAL_MAX_LIMIT>;
 			};
 			vbat_cpu5 {
 				trip = <&low_vbat>;
-				cooling-device = <&cpu5_isolate 1 1>;
+				cooling-device =
+					<&CPU5 THERMAL_MAX_LIMIT
+						THERMAL_MAX_LIMIT>;
 			};
 			vbat_map6 {
 				trip = <&low_vbat>;
@@ -861,8 +865,8 @@
 
 		trips {
 			low_soc: low-soc {
-				temperature = <10>;
-				hysteresis = <0>;
+				temperature = <20>;
+				hysteresis = <2>;
 				type = "passive";
 			};
 		};
