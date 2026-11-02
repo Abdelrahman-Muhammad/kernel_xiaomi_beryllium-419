@@ -72,6 +72,19 @@
 
 #include <trace/events/sched.h>
 
+#if defined(CONFIG_KSU) && !defined(CONFIG_KSU_KPROBES_HOOK) && \
+	!defined(CONFIG_KSU_MODULE)
+/*
+ * Manual execve hook for KernelSU-Next on kernels without kprobes.
+ * This is what lets ksu_handle_execveat_ksud() see Android init's
+ * second-stage exec and apply the su/ksu SELinux policy.  Without it
+ * the policy never gains the ksu domain and every root shell stays
+ * in untrusted_app, so /data/adb and /proc/1/ns/mnt are inaccessible.
+ */
+extern int ksu_handle_execveat(int *fd, struct filename **filename_ptr,
+			       void *argv, void *envp, int *flags);
+#endif
+
 int suid_dumpable = 0;
 
 static LIST_HEAD(formats);
@@ -1742,6 +1755,11 @@ static int __do_execve_file(int fd, struct filename *filename,
 
 	if (IS_ERR(filename))
 		return PTR_ERR(filename);
+
+#if defined(CONFIG_KSU) && !defined(CONFIG_KSU_KPROBES_HOOK) && \
+	!defined(CONFIG_KSU_MODULE)
+	ksu_handle_execveat(&fd, &filename, &argv, &envp, &flags);
+#endif
 
 	/*
 	 * We move the actual failure in case of RLIMIT_NPROC excess from

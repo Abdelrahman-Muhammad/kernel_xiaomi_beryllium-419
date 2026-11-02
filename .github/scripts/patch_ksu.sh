@@ -7,6 +7,23 @@ sed -i 's@^#if LINUX_VERSION_CODE < KERNEL_VERSION(5, 8, 0)$@#if 0 /* 4.19-CIP a
 sed -i '/unsigned long phys_from_virt/i #ifndef pmd_leaf\n#define pmd_leaf(pmd) pmd_sect(pmd)\n#endif\n#ifndef pud_leaf\n#define pud_leaf(pud) pud_sect(pud)\n#endif\n' \
   drivers/kernelsu/hook/patch_memory.c
 
+# arm64 4.19 maps .rodata (and therefore sys_call_table) with PMD section
+# mappings.  Walking init_mm rejects those sections, so phys_from_virt()
+# returned -ENOENT and every syscall-table patch failed ("sth: 0/4").
+# Kernel-image addresses are exactly what __pa_symbol()/kimage_voffset is for.
+sed -i '0,/^[[:space:]]*\*err = 0;$/s//&\n\treturn (unsigned long)__pa_symbol((void *)addr);/' \
+  drivers/kernelsu/hook/patch_memory.c
+
+grep -q 'return (unsigned long)__pa_symbol((void \*)addr);' \
+  drivers/kernelsu/hook/patch_memory.c || {
+    echo "ERROR: phys_from_virt __pa_symbol patch did not apply" >&2
+    exit 1
+}
+
+# __pa_symbol() lives in asm/memory.h; make sure it is visible on arm64.
+sed -i '0,/^#include "patch_memory.h"$/s//&\n#if defined(__aarch64__)\n#include <asm\/memory.h>\n#endif/' \
+  drivers/kernelsu/hook/patch_memory.c
+
 sed -i 's@pr_info("handle_setresuid from@pr_debug("handle_setresuid from@g' \
   drivers/kernelsu/hook/setuid_hook.c
 

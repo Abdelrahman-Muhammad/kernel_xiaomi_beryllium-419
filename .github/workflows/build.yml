@@ -56,7 +56,7 @@ jobs:
 
       - name: Setup KernelSU-Next
         run: |
-          curl -LSs "https://raw.githubusercontent.com/KernelSU-Next/KernelSU-Next/next/kernel/setup.sh" | bash -s legacy
+          curl -LSs "https://raw.githubusercontent.com/KernelSU-Next/KernelSU-Next/legacy/kernel/setup.sh" | bash -s legacy
           bash .github/scripts/patch_ksu.sh
 
       - name: Configure Kernel
@@ -120,8 +120,8 @@ jobs:
           # Use pre-configured anykernel.sh with safe recovery checks
           cp ../anykernel.sh .
 
-          # Dynamically fetch latest KernelSU-Next userspace binaries
-          curl -f -sSL --retry 3 -o ksud "https://github.com/KernelSU-Next/KernelSU-Next/releases/latest/download/ksud-aarch64-linux-android"
+          # Pin userspace to the same release as the kernel (KSU_VERSION_TAG_OVERRIDE)
+          curl -f -sSL --retry 3 -o ksud "https://github.com/KernelSU-Next/KernelSU-Next/releases/download/v3.4.2/ksud-aarch64-linux-android"
           curl -f -sSL --retry 3 -o busybox "https://raw.githubusercontent.com/Magisk-Modules-Repo/busybox-ndk/master/busybox-arm64"
           chmod 755 ksud busybox
 
