@@ -75,7 +75,11 @@ jobs:
             -e CONFIG_KSU \
             -d CONFIG_KSU_MANUAL_HOOK \
             -d CONFIG_KSU_KPROBES_HOOK \
-            -e CONFIG_KSU_SYSCALL_TABLE_HOOK
+            -e CONFIG_KSU_SYSCALL_TABLE_HOOK \
+            -e CONFIG_OVERLAY_FS \
+            -e CONFIG_TMPFS \
+            -e CONFIG_TMPFS_POSIX_ACL \
+            -e CONFIG_TMPFS_XATTR
 
           make -j$(nproc --all) O=out \
             ARCH=arm64 \
@@ -87,8 +91,10 @@ jobs:
             olddefconfig
 
           echo "=== Verifying KernelSU Configuration ==="
-          grep -E "CONFIG_KSU" out/.config || true
+          grep -E "CONFIG_KSU|CONFIG_OVERLAY_FS|CONFIG_TMPFS" out/.config || true
           grep -q "CONFIG_KSU_SYSCALL_TABLE_HOOK=y" out/.config || (echo "ERROR: CONFIG_KSU_SYSCALL_TABLE_HOOK is not set!" && exit 1)
+          grep -q "CONFIG_OVERLAY_FS=y" out/.config || (echo "ERROR: CONFIG_OVERLAY_FS is not set!" && exit 1)
+          grep -q "CONFIG_TMPFS_XATTR=y" out/.config || (echo "ERROR: CONFIG_TMPFS_XATTR is not set!" && exit 1)
 
       - name: Build Kernel
         run: |
@@ -111,17 +117,13 @@ jobs:
           git clone --depth=1 https://github.com/osm0sis/AnyKernel3.git -b master AnyKernel3
           cd AnyKernel3
 
-          # Configure anykernel.sh for Poco F1 (beryllium)
-          sed -i 's/device.name1=.*/device.name1=beryllium/' anykernel.sh
-          sed -i 's/device.name2=.*/device.name2=Poco F1/' anykernel.sh
-          sed -i 's/device.name3=.*/device.name3=/' anykernel.sh
-          sed -i 's/device.name4=.*/device.name4=/' anykernel.sh
-          sed -i 's/device.name5=.*/device.name5=/' anykernel.sh
-          sed -i 's|BLOCK=.*|BLOCK=/dev/block/bootdevice/by-name/boot;|' anykernel.sh
-          sed -i 's/IS_SLOT_DEVICE=.*/IS_SLOT_DEVICE=0;/' anykernel.sh
+          # Use pre-configured anykernel.sh with safe recovery checks
+          cp ../anykernel.sh .
 
-          # Remove sample device modifications between dump_boot and write_boot
-          sed -i '/backup_file init.rc/,/append_file fstab.tuna "usbdisk" fstab;/d' anykernel.sh
+          # Dynamically fetch latest KernelSU-Next userspace binaries
+          curl -f -sSL --retry 3 -o ksud "https://github.com/KernelSU-Next/KernelSU-Next/releases/latest/download/ksud-aarch64-linux-android"
+          curl -f -sSL --retry 3 -o busybox "https://raw.githubusercontent.com/Magisk-Modules-Repo/busybox-ndk/master/busybox-arm64"
+          chmod 755 ksud busybox
 
           # Copy compiled kernel image
           cp ../out/arch/arm64/boot/Image.gz-dtb .
