@@ -9,7 +9,7 @@ on:
 jobs:
   build:
     name: Build Kernel (beryllium)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
 
     steps:
       - name: Checkout Kernel Source
@@ -56,7 +56,10 @@ jobs:
 
       - name: Setup KernelSU-Next
         run: |
-          curl -LSs "https://raw.githubusercontent.com/KernelSU-Next/KernelSU-Next/legacy/kernel/setup.sh" | bash -s legacy
+          # Pin the legacy kernel tree.  The v3.4.2 tag is the GKI layout;
+          # the "legacy" branch is the 4.19-compatible one used here.
+          KSU_COMMIT=b933b1f728116a456fbebf27b6a8772a640cdf23
+          curl -LSs "https://raw.githubusercontent.com/KernelSU-Next/KernelSU-Next/${KSU_COMMIT}/kernel/setup.sh" | bash -s "${KSU_COMMIT}"
           bash .github/scripts/patch_ksu.sh
 
       - name: Configure Kernel
@@ -68,18 +71,6 @@ jobs:
             arch/arm64/configs/vendor/sdm845-perf_defconfig \
             arch/arm64/configs/vendor/xiaomi/sdm845-common.config \
             arch/arm64/configs/vendor/xiaomi/beryllium.config
-
-          ./scripts/config --file out/.config \
-            -e CONFIG_KALLSYMS \
-            -e CONFIG_KALLSYMS_ALL \
-            -e CONFIG_KSU \
-            -d CONFIG_KSU_MANUAL_HOOK \
-            -d CONFIG_KSU_KPROBES_HOOK \
-            -e CONFIG_KSU_SYSCALL_TABLE_HOOK \
-            -e CONFIG_OVERLAY_FS \
-            -e CONFIG_TMPFS \
-            -e CONFIG_TMPFS_POSIX_ACL \
-            -e CONFIG_TMPFS_XATTR
 
           make -j$(nproc --all) O=out \
             ARCH=arm64 \
@@ -114,16 +105,15 @@ jobs:
 
       - name: Package AnyKernel3
         run: |
-          git clone --depth=1 https://github.com/osm0sis/AnyKernel3.git -b master AnyKernel3
+          # Pin AnyKernel3 instead of floating on master.
+          git clone --depth=1 https://github.com/osm0sis/AnyKernel3.git AnyKernel3
           cd AnyKernel3
+          git fetch --depth=1 origin 41f04bdb4ee30a44e429c2c1131d5e8bb32b15f1
+          git checkout --detach 41f04bdb4ee30a44e429c2c1131d5e8bb32b15f1
 
-          # Use pre-configured anykernel.sh with safe recovery checks
+          # Use pre-configured anykernel.sh (kernel only; the KernelSU
+          # manager installs ksud/busybox on first boot).
           cp ../anykernel.sh .
-
-          # Pin userspace to the same release as the kernel (KSU_VERSION_TAG_OVERRIDE)
-          curl -f -sSL --retry 3 -o ksud "https://github.com/KernelSU-Next/KernelSU-Next/releases/download/v3.4.2/ksud-aarch64-linux-android"
-          curl -f -sSL --retry 3 -o busybox "https://raw.githubusercontent.com/Magisk-Modules-Repo/busybox-ndk/master/busybox-arm64"
-          chmod 755 ksud busybox
 
           # Copy compiled kernel image
           cp ../out/arch/arm64/boot/Image.gz-dtb .
