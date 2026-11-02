@@ -3804,9 +3804,9 @@ static int fg_psy_get_property(struct power_supply *psy,
 	case POWER_SUPPLY_PROP_CAPACITY:
 		rc = fg_get_prop_capacity(fg, &pval->intval);
 #if defined(CONFIG_MACH_XIAOMI_SDM845)
-		/* Synchronize batt_soc with accurate hardware fuel gauge */
-		if (rc >= 0)
-			fg->param.batt_soc = pval->intval;
+		// Using smooth battery capacity.
+		if (fg->param.batt_soc >= 0)
+			pval->intval = fg->param.batt_soc;
 #endif
 		break;
 	case POWER_SUPPLY_PROP_REAL_CAPACITY:
@@ -5820,8 +5820,27 @@ static void fg_battery_soc_smooth_tracking(struct fg_dev *fg)
 	soc_changed = min(1, delta_time);
 
 	if (last_batt_soc >= 0) {
-		/* Track true raw SOC without artificial step lag */
-		last_batt_soc = fg->param.batt_raw_soc;
+		if (last_batt_soc < fg->param.batt_raw_soc &&
+					fg->param.batt_ma < 0)
+		  /* Battery in charging status
+		   * update the soc when resuming device
+		   */
+			last_batt_soc = fg->param.update_now ?
+			  fg->param.batt_raw_soc : last_batt_soc + soc_changed;
+		else if (last_batt_soc > fg->param.batt_raw_soc
+					&& fg->param.batt_ma > 0)
+		  /* Battery in discharging status
+		   * update the soc when resuming device
+		   */
+			last_batt_soc = fg->param.update_now ?
+			  fg->param.batt_raw_soc : last_batt_soc - soc_changed;
+		else if (last_batt_soc != 100
+					&& fg->param.batt_raw_soc >= 95
+					&& fg->charge_status == POWER_SUPPLY_STATUS_FULL)
+			// Unlikely status
+			last_batt_soc = fg->param.update_now ?
+				100 : last_batt_soc + soc_changed;
+
 		fg->param.update_now = false;
 	} else {
 		last_batt_soc = fg->param.batt_raw_soc;
