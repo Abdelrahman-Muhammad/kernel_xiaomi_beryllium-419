@@ -2786,8 +2786,6 @@ static void handle_state_snk_wait_for_capabilities(struct usbpd *pd,
 		val.intval = POWER_SUPPLY_PD_INACTIVE;
 		power_supply_set_property(pd->usb_psy,
 				POWER_SUPPLY_PROP_PD_ACTIVE, &val);
-
-		start_usb_peripheral(pd);
 	}
 }
 
@@ -3907,7 +3905,6 @@ static int psy_changed(struct notifier_block *nb, unsigned long evt, void *ptr)
 	    typec_mode == POWER_SUPPLY_TYPEC_NONE) {
 		usbpd_dbg(&pd->dev, "disconnect: typec mode:%d\n", typec_mode);
 		pd->typec_mode = typec_mode;
-		stop_usb_peripheral(pd);
 		ret = usbpd_process_typec_mode(pd, typec_mode);
 		if (ret)
 			kick_sm(pd, 0);

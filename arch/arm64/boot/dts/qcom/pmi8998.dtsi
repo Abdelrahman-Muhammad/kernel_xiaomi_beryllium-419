@@ -98,6 +98,12 @@
 					= <3000000 1500000 1000000 500000>;
 			qcom,auto-recharge-soc;
 			qcom,suspend-input-on-debug-batt;
+			/*
+			 * Let the charger export EXTCON_USB/USB_HOST.  Without
+			 * this, smblib_notify_usb_host() never runs and a
+			 * USB-C OTG adapter can never put the PHY in host mode.
+			 */
+			qcom,use-extcon;
 
 			qcom,chgr@1000 {
 				reg = <0x1000 0x100>;

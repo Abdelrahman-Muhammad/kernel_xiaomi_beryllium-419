@@ -1398,7 +1398,7 @@ static int __smblib_set_prop_typec_power_role(struct smb_charger *chg,
 				     const union power_supply_propval *val)
 {
 	int rc = 0;
-	u8 power_role;
+	u8 power_role, ctrl;
 
 	switch (val->intval) {
 	case POWER_SUPPLY_TYPEC_PR_NONE:
@@ -1421,6 +1421,24 @@ static int __smblib_set_prop_typec_power_role(struct smb_charger *chg,
 	if (power_role != TYPEC_DISABLE_CMD_BIT) {
 		if (chg->ufp_only_mode)
 			power_role = UFP_EN_CMD_BIT;
+	}
+
+	/*
+	 * Writing the same role again restarts the Type-C state machine and
+	 * can generate another CC interrupt, which is how a Try.SNK retry
+	 * turns into a self-sustaining flap.  Skip the write when the role
+	 * already matches; the PBS workaround below is likewise idempotent.
+	 */
+	rc = smblib_read(chg, TYPE_C_INTRPT_ENB_SOFTWARE_CTRL_REG, &ctrl);
+	if (rc < 0) {
+		smblib_err(chg, "Couldn't read TYPE_C_INTRPT_ENB_SOFTWARE_CTRL rc=%d\n",
+			rc);
+		return rc;
+	}
+
+	if ((ctrl & TYPEC_POWER_ROLE_CMD_MASK) == power_role) {
+		smblib_dbg(chg, PR_MISC, "power_role already %d\n", power_role);
+		return 0;
 	}
 
 	if (chg->wa_flags & TYPEC_PBS_WA_BIT) {
@@ -3402,13 +3420,27 @@ static int smblib_get_prop_dfp_mode(struct smb_charger *chg)
 
 static int smblib_get_prop_typec_mode(struct smb_charger *chg)
 {
-	if (!(chg->typec_status[3] & CC_ATTACHED_BIT))
-		return POWER_SUPPLY_TYPEC_NONE;
+	int typec_mode;
 
 	if (chg->typec_status[3] & UFP_DFP_MODE_STATUS_BIT)
-		return smblib_get_prop_dfp_mode(chg);
+		typec_mode = smblib_get_prop_dfp_mode(chg);
 	else
-		return smblib_get_prop_ufp_mode(chg);
+		typec_mode = smblib_get_prop_ufp_mode(chg);
+
+	/*
+	 * CC_ATTACHED only means "a source is presenting VBUS to us".  It is
+	 * clear for an Rd-Rd/Ra-Ra debug accessory even though the DFP status
+	 * bits are valid, and typec_try_sink() relies on seeing that mode to
+	 * skip Try.SNK for such partners.  Apply the filter only to the two
+	 * modes that carry real VBUS so a stale Rd/Rd status does not keep a
+	 * disconnected port alive.
+	 */
+	if (!(chg->typec_status[3] & CC_ATTACHED_BIT) &&
+	    (typec_mode == POWER_SUPPLY_TYPEC_SINK ||
+	     typec_mode == POWER_SUPPLY_TYPEC_SINK_POWERED_CABLE))
+		return POWER_SUPPLY_TYPEC_NONE;
+
+	return typec_mode;
 }
 
 int smblib_get_prop_typec_power_role(struct smb_charger *chg,
@@ -5975,6 +6007,12 @@ void smblib_usb_typec_change(struct smb_charger *chg)
 	}
 
 	smblib_handle_typec_cc_state_change(chg);
+
+	dev_info_ratelimited(chg->dev,
+		"typec status %02x %02x %02x %02x %02x mode=%d present=%d\n",
+		chg->typec_status[0], chg->typec_status[1],
+		chg->typec_status[2], chg->typec_status[3],
+		chg->typec_status[4], chg->typec_mode, chg->typec_present);
 
 	if (chg->typec_status[3] & TYPEC_VBUS_ERROR_STATUS_BIT)
 		smblib_dbg(chg, PR_INTERRUPT, "IRQ: vbus-error\n");
