@@ -6008,11 +6008,20 @@ void smblib_usb_typec_change(struct smb_charger *chg)
 
 	smblib_handle_typec_cc_state_change(chg);
 
-	dev_info_ratelimited(chg->dev,
-		"typec status %02x %02x %02x %02x %02x mode=%d present=%d\n",
+	/*
+	 * Deliberately not rate limited: this only runs on a CC interrupt, and
+	 * when the Type-C state machine misbehaves the full sequence is the
+	 * only way to tell which status bit actually changed.
+	 */
+	dev_info(chg->dev,
+		"typec status %02x %02x %02x %02x %02x mode=%d present=%d cc=%d db=%d dfp=%d vbus=%d\n",
 		chg->typec_status[0], chg->typec_status[1],
 		chg->typec_status[2], chg->typec_status[3],
-		chg->typec_status[4], chg->typec_mode, chg->typec_present);
+		chg->typec_status[4], chg->typec_mode, chg->typec_present,
+		!!(chg->typec_status[3] & CC_ATTACHED_BIT),
+		!!(chg->typec_status[3] & TYPEC_DEBOUNCE_DONE_STATUS_BIT),
+		!!(chg->typec_status[3] & UFP_DFP_MODE_STATUS_BIT),
+		!!(chg->typec_status[3] & TYPEC_VBUS_STATUS_BIT));
 
 	if (chg->typec_status[3] & TYPEC_VBUS_ERROR_STATUS_BIT)
 		smblib_dbg(chg, PR_INTERRUPT, "IRQ: vbus-error\n");
