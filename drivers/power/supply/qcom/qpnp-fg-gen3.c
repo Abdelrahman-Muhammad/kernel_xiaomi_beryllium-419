@@ -649,6 +649,12 @@ static int fg_get_battery_esr(struct fg_dev *fg, int *val)
 }
 #endif
 
+/*
+ * Lowest voltage that can be read from a healthy single Li-ion cell.  A
+ * sample below this is an ADC glitch, not a discharged battery.
+ */
+#define FG_MIN_PLAUSIBLE_VBATT_UV	2500000
+
 static bool is_batt_empty(struct fg_dev *fg)
 {
 	struct fg_gen3_chip *chip = container_of(fg, struct fg_gen3_chip, fg);
@@ -668,6 +674,18 @@ static bool is_batt_empty(struct fg_dev *fg)
 	rc = fg_get_battery_voltage(fg, &vbatt_uv);
 	if (rc < 0) {
 		pr_err("failed to get battery voltage, rc=%d\n", rc);
+		return false;
+	}
+
+	/*
+	 * This is the safety-critical path: returning true makes
+	 * fg_get_prop_capacity() report 0 %, which Android turns into a
+	 * "shutdown,battery".  Never trust an empty report built on a
+	 * reading that cannot come from a real cell.
+	 */
+	if (vbatt_uv < FG_MIN_PLAUSIBLE_VBATT_UV) {
+		pr_warn("ignoring empty report, vbatt %d uV is implausible\n",
+			vbatt_uv);
 		return false;
 	}
 
@@ -742,6 +760,7 @@ static bool is_debug_batt_id(struct fg_dev *fg)
 #if defined(CONFIG_MACH_XIAOMI_SDM845)
 #define EMPTY_REPORT_SOC	1
 #endif
+
 static int fg_get_prop_capacity(struct fg_dev *fg, int *val)
 {
 	struct fg_gen3_chip *chip = container_of(fg, struct fg_gen3_chip, fg);
@@ -2507,7 +2526,8 @@ static void fg_cycle_counter_update(struct fg_dev *fg)
 		}
 	}
 
-	fg_dbg(fg, FG_STATUS, "batt_soc: %d bucket: %d chg_status: %d\n",
+	/* Called on every charging-status poll; keep it out of dmesg. */
+	pr_debug("batt_soc: %d bucket: %d chg_status: %d\n",
 		batt_soc, bucket, fg->charge_status);
 out:
 	mutex_unlock(&chip->cyc_ctr.lock);
