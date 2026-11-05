@@ -1,0 +1,107 @@
+name: Build Kernel A17
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - A17
+
+jobs:
+  build:
+    name: Build Kernel (beryllium)
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: Checkout Kernel Source
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Set up Build Environment
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            bc \
+            bison \
+            ca-certificates \
+            curl \
+            flex \
+            gcc \
+            git \
+            libssl-dev \
+            lld \
+            make \
+            openssl \
+            python-is-python3 \
+            python3 \
+            xz-utils \
+            zip \
+            libelf-dev
+
+      - name: Download Toolchains
+        run: |
+          echo "Fetching AOSP Clang r487747c..."
+          mkdir -p "$GITHUB_WORKSPACE/clang"
+          curl -f -sSL --retry 3 "https://kali.download/nethunter-images/toolchains/clang-r487747c.tar.gz" | tar -xz -C "$GITHUB_WORKSPACE/clang"
+
+          echo "Fetching GCC 4.9 AArch64..."
+          mkdir -p "$GITHUB_WORKSPACE/gcc64"
+          curl -f -sSL --retry 3 "https://android.googlesource.com/platform/prebuilts/gcc/linux-x86/aarch64/aarch64-linux-android-4.9/+archive/refs/heads/pie-release-2.tar.gz" | tar -xz -C "$GITHUB_WORKSPACE/gcc64"
+
+          echo "Fetching GCC 4.9 ARM32..."
+          mkdir -p "$GITHUB_WORKSPACE/gcc32"
+          curl -f -sSL --retry 3 "https://android.googlesource.com/platform/prebuilts/gcc/linux-x86/arm/arm-linux-androideabi-4.9/+archive/refs/heads/pie-release-2.tar.gz" | tar -xz -C "$GITHUB_WORKSPACE/gcc32"
+
+          echo "Toolchains ready."
+
+      - name: Configure Kernel
+        run: |
+          export PATH="$GITHUB_WORKSPACE/clang/bin:$GITHUB_WORKSPACE/gcc64/bin:$GITHUB_WORKSPACE/gcc32/bin:$PATH"
+
+          mkdir -p out
+          ARCH=arm64 ./scripts/kconfig/merge_config.sh -m -O out \
+            arch/arm64/configs/vendor/sdm845-perf_defconfig \
+            arch/arm64/configs/vendor/xiaomi/sdm845-common.config \
+            arch/arm64/configs/vendor/xiaomi/beryllium.config
+
+          make -j$(nproc --all) O=out \
+            ARCH=arm64 \
+            SUBARCH=arm64 \
+            CC=clang \
+            CLANG_TRIPLE=aarch64-linux-gnu- \
+            CROSS_COMPILE=aarch64-linux-android- \
+            CROSS_COMPILE_ARM32=arm-linux-androideabi- \
+            olddefconfig
+
+      - name: Build Kernel
+        run: |
+          export PATH="$GITHUB_WORKSPACE/clang/bin:$GITHUB_WORKSPACE/gcc64/bin:$GITHUB_WORKSPACE/gcc32/bin:$PATH"
+
+          make -j$(nproc --all) O=out \
+            ARCH=arm64 \
+            SUBARCH=arm64 \
+            CC=clang \
+            CLANG_TRIPLE=aarch64-linux-gnu- \
+            CROSS_COMPILE=aarch64-linux-android- \
+            CROSS_COMPILE_ARM32=arm-linux-androideabi- \
+            Image.gz-dtb
+
+      - name: Package AnyKernel3
+        run: |
+          git clone --depth=1 https://github.com/osm0sis/AnyKernel3.git AnyKernel3
+          cd AnyKernel3
+          git fetch --depth=1 origin 41f04bdb4ee30a44e429c2c1131d5e8bb32b15f1
+          git checkout --detach 41f04bdb4ee30a44e429c2c1131d5e8bb32b15f1
+
+          cp ../anykernel.sh .
+          cp ../out/arch/arm64/boot/Image.gz-dtb .
+
+          zip -r9 ../AnyKernel3-beryllium-4.19.zip * -x .git README.md *placeholder
+          cd ..
+
+      - name: Upload Kernel Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: AnyKernel3-beryllium-4.19-A17
+          path: AnyKernel3-beryllium-4.19.zip
+          if-no-files-found: error
