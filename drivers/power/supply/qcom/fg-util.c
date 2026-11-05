@@ -1034,6 +1034,13 @@ int fg_get_battery_current(struct fg_dev *fg, int *val)
 
 #define BATT_VOLTAGE_NUMR	122070
 #define BATT_VOLTAGE_DENR	1000
+/*
+ * A single Li-ion cell cannot sit below ~2.5 V without its protection FETs
+ * having already opened.  Bad ADC samples (beryllium logged a 12 mV reading
+ * during a Type-C interrupt storm) must never be reported as a battery
+ * voltage: is_batt_empty() would then force the reported capacity to 0 %.
+ */
+#define BATT_VOLTAGE_MIN_UV	2500000
 int fg_get_battery_voltage(struct fg_dev *fg, int *val)
 {
 	int rc = 0, tries = 0;
@@ -1071,6 +1078,12 @@ int fg_get_battery_voltage(struct fg_dev *fg, int *val)
 
 	pr_debug("buf: %x %x temp: %x\n", buf[0], buf[1], temp);
 	*val = div_u64((u64)temp * BATT_VOLTAGE_NUMR, BATT_VOLTAGE_DENR);
+
+	if (*val < BATT_VOLTAGE_MIN_UV) {
+		pr_err("Ignoring implausible VBATT %d uV\n", *val);
+		return -EINVAL;
+	}
+
 	return 0;
 }
 

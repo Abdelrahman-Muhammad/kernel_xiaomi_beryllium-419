@@ -534,6 +534,9 @@ struct fg_dev {
 #if defined(CONFIG_MACH_XIAOMI_SDM845)
 	bool			empty_restart_fg;
 #endif
+	u64			empty_since;
+	u64			last_diag_time;
+	int			last_diag_raw_soc;
 	enum fg_version		version;
 	bool			suspended;
 #if defined(CONFIG_MACH_XIAOMI_SDM845)

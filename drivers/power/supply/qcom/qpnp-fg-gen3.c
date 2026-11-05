@@ -6,6 +6,7 @@
 
 #include <linux/debugfs.h>
 #include <linux/ktime.h>
+#include <linux/timekeeping.h>
 #include <linux/of.h>
 #include <linux/spinlock.h>
 #include <linux/alarmtimer.h>
@@ -649,6 +650,13 @@ static int fg_get_battery_esr(struct fg_dev *fg, int *val)
 }
 #endif
 
+/*
+ * Lowest voltage that can be read from a healthy single Li-ion cell.  A
+ * sample below this is an ADC glitch, not a discharged battery.
+ */
+#define FG_MIN_PLAUSIBLE_VBATT_UV	2500000
+#define FG_EMPTY_SANITY_MSOC		10
+
 static bool is_batt_empty(struct fg_dev *fg)
 {
 	struct fg_gen3_chip *chip = container_of(fg, struct fg_gen3_chip, fg);
@@ -671,12 +679,39 @@ static bool is_batt_empty(struct fg_dev *fg)
 		return false;
 	}
 
-	rc = fg_get_msoc(fg, &msoc);
-	if (!rc)
-		pr_warn("batt_soc_rt_sts: %x vbatt: %d uV msoc:%d\n", status,
-			vbatt_uv, msoc);
+	/*
+	 * This is the safety-critical path: returning true makes
+	 * fg_get_prop_capacity() report 0 %, which Android turns into a
+	 * "shutdown,battery".  Never trust an empty report built on a
+	 * reading that cannot come from a real cell.
+	 */
+	if (vbatt_uv < FG_MIN_PLAUSIBLE_VBATT_UV) {
+		pr_warn("ignoring empty report, vbatt %d uV is implausible\n",
+			vbatt_uv);
+		return false;
+	}
 
-	return ((vbatt_uv < chip->dt.cutoff_volt_mv * 1000) ? true : false);
+	rc = fg_get_msoc(fg, &msoc);
+	if (!rc && msoc > FG_EMPTY_SANITY_MSOC) {
+		pr_warn_ratelimited("ignoring empty report: MSOC_EMPTY with healthy msoc=%d\n",
+			msoc);
+		return false;
+	}
+
+	if (vbatt_uv >= chip->dt.cutoff_volt_mv * 1000) {
+		fg->empty_since = 0;
+		return false;
+	}
+
+	if (!fg->empty_since)
+		fg->empty_since = ktime_get_boottime_ns();
+
+	if ((ktime_get_boottime_ns() - fg->empty_since) < 5 * NSEC_PER_SEC)
+		return false;
+
+	pr_warn("batt_soc_rt_sts: %x vbatt: %d uV msoc:%d, empty confirmed after 5s\n",
+		status, vbatt_uv, msoc);
+	return true;
 }
 
 static int fg_get_debug_batt_id(struct fg_dev *fg, int *batt_id)
@@ -742,6 +777,7 @@ static bool is_debug_batt_id(struct fg_dev *fg)
 #if defined(CONFIG_MACH_XIAOMI_SDM845)
 #define EMPTY_REPORT_SOC	1
 #endif
+
 static int fg_get_prop_capacity(struct fg_dev *fg, int *val)
 {
 	struct fg_gen3_chip *chip = container_of(fg, struct fg_gen3_chip, fg);
@@ -2507,7 +2543,8 @@ static void fg_cycle_counter_update(struct fg_dev *fg)
 		}
 	}
 
-	fg_dbg(fg, FG_STATUS, "batt_soc: %d bucket: %d chg_status: %d\n",
+	/* Called on every charging-status poll; keep it out of dmesg. */
+	pr_debug("batt_soc: %d bucket: %d chg_status: %d\n",
 		batt_soc, bucket, fg->charge_status);
 out:
 	mutex_unlock(&chip->cyc_ctr.lock);
@@ -5852,7 +5889,7 @@ static void fg_battery_soc_smooth_tracking(struct fg_dev *fg)
 		power_supply_changed(fg->batt_psy);
 	}
 
-	pr_info("soc:%d, last_soc:%d, raw_soc:%d, soc_changed:%d.\n",
+	pr_debug("soc:%d, last_soc:%d, raw_soc:%d, soc_changed:%d.\n",
 				fg->param.batt_soc, last_batt_soc,
 				fg->param.batt_raw_soc, soc_changed);
 }
@@ -5881,9 +5918,35 @@ static void soc_monitor_work(struct work_struct *work)
 	if (fg->soc_reporting_ready)
 		fg_battery_soc_smooth_tracking(fg);
 
-	pr_info("soc:%d, raw_soc:%d, c:%d, s:%d\n",
+	pr_debug("soc:%d, raw_soc:%d, c:%d, s:%d\n",
 				fg->param.batt_soc, fg->param.batt_raw_soc,
 				fg->param.batt_ma, fg->charge_status);
+
+	if (!fg->last_diag_time) {
+		fg->last_diag_time = ktime_get_boottime_ns();
+		fg->last_diag_raw_soc = fg->param.batt_raw_soc;
+	} else if (fg->param.batt_raw_soc > fg->last_diag_raw_soc) {
+		fg->last_diag_raw_soc = fg->param.batt_raw_soc;
+		fg->last_diag_time = ktime_get_boottime_ns();
+	} else if (ktime_get_boottime_ns() - fg->last_diag_time >= 60 * NSEC_PER_SEC) {
+		if (fg->last_diag_raw_soc - fg->param.batt_raw_soc > 10) {
+			u8 rt_status = 0;
+			int v_uv = 0, m_soc = 0;
+
+			fg_read(fg, BATT_SOC_INT_RT_STS(fg), &rt_status, 1);
+			fg_get_battery_voltage(fg, &v_uv);
+			fg_get_msoc(fg, &m_soc);
+			pr_warn_ratelimited("FG: rapid raw SOC drop: %d -> %d in %lld s, msoc=%d vbatt=%d uV curr=%d mA temp=%d empty_bit=%d prof_status=%d empty_restart=%d\n",
+				fg->last_diag_raw_soc, fg->param.batt_raw_soc,
+				(ktime_get_boottime_ns() - fg->last_diag_time) / NSEC_PER_SEC,
+				m_soc, v_uv, fg->param.batt_ma, fg->param.batt_temp,
+				!!(rt_status & MSOC_EMPTY_BIT), fg->profile_load_status,
+				fg->empty_restart_fg);
+		}
+		fg->last_diag_raw_soc = fg->param.batt_raw_soc;
+		fg->last_diag_time = ktime_get_boottime_ns();
+	}
+
 	schedule_delayed_work(&fg->soc_monitor_work,
 				msecs_to_jiffies(MONITOR_SOC_WAIT_PER_MS));
 }
