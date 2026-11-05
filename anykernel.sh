@@ -4,7 +4,7 @@
 ### AnyKernel setup
 # global properties
 properties() { '
-kernel.string=Linux 4.19 for POCO F1 (beryllium)
+kernel.string=Linux 4.19 for POCO F1 (beryllium) [OriginSU]
 do.devicecheck=1
 do.modules=0
 do.systemless=1
