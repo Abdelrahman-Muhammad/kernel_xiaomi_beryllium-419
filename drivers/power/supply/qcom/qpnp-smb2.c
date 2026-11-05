@@ -2228,13 +2228,13 @@ static int smb2_init_hw(struct smb2 *chip)
 			"Couldn't configure QC2.0 to 9V rc=%d\n", rc);
 		return rc;
 	}
-	/* Operate the QC3.0 to limit vbus to 6.6v*/
+	/* Operate the QC3.0 to limit vbus to 9V (20 pulses = +4.0V from 5V) */
 	rc = smblib_masked_write(chg, HVDCP_PULSE_COUNT_MAX_REG,
 				 PULSE_COUNT_QC3P0_mask,
-				 0x7);
+				 0x14);
 	if (rc < 0) {
 		dev_err(chg->dev,
-			"Couldn't configure QC3.0 to 6.6V rc=%d\n", rc);
+			"Couldn't configure QC3.0 to 9V rc=%d\n", rc);
 		return rc;
 	}
 #endif

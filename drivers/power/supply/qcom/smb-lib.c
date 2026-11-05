@@ -4547,7 +4547,8 @@ static void smblib_check_vbus_work(struct work_struct *work)
 
 	usb_present = val.intval;
 	if (usb_present) {
-		if (chg->real_charger_type == POWER_SUPPLY_TYPE_USB_HVDCP) {
+		if (chg->real_charger_type == POWER_SUPPLY_TYPE_USB_HVDCP ||
+		    chg->real_charger_type == POWER_SUPPLY_TYPE_USB_HVDCP_3) {
 			rc = smblib_get_prop_usb_voltage_now(chg, &val);
 			if (rc < 0)
 				pr_err("Couldn't get usb voltage rc=%d\n", rc);
@@ -4557,6 +4558,16 @@ static void smblib_check_vbus_work(struct work_struct *work)
 				/* enable hardware INOV again */
 				vote(chg->hvdcp_hw_inov_dis_votable,
 						UNSTANDARD_QC2_VOTER, false, 0);
+				vote(chg->usb_icl_votable, HVDCP2_ICL_VOTER, false, 0);
+				chg->vbus_retry_count = 0;
+			} else if (chg->vbus_retry_count < 2) {
+				chg->vbus_retry_count++;
+				pr_info("VBUS is %d, waiting for 9V step-up (retry %d)\n",
+					val.intval, chg->vbus_retry_count);
+				rc = smblib_masked_write(chg, CMD_HVDCP_2_REG,
+						FORCE_9V_BIT, FORCE_9V_BIT);
+				schedule_delayed_work(&chg->check_vbus_work,
+						msecs_to_jiffies(1000));
 			} else {
 				pr_info("set adapter allowance to 5V and force 5V charge\n");
 				rc = smblib_masked_write(chg, CMD_HVDCP_2_REG,
@@ -4568,6 +4579,7 @@ static void smblib_check_vbus_work(struct work_struct *work)
 				chg->unstandard_hvdcp = true;
 				vote(chg->usb_icl_votable, LEGACY_UNKNOWN_VOTER,
 						false, 0);
+				vote(chg->usb_icl_votable, HVDCP2_ICL_VOTER, false, 0);
 				vote(chg->usb_icl_votable, UNSTANDARD_QC2_VOTER,
 						true, UNSTANDARD_HVDCP2_UA);
 			}
@@ -5059,9 +5071,12 @@ static void smblib_handle_hvdcp_3p0_auth_done(struct smb_charger *chg,
 	apsd_result = smblib_get_apsd_result(chg);
 
 #if defined(CONFIG_MACH_XIAOMI_SDM845)
+	__smblib_set_prop_pd_active(chg, 0);
+
 	if (apsd_result->pst == POWER_SUPPLY_TYPE_USB_HVDCP) {
 		/* disable hardware INOV and force HVDCP2 to 9V */
 		if (!chg->check_vbus_once) {
+			vote(chg->usb_icl_votable, HVDCP2_ICL_VOTER, true, 1000000);
 			vote(chg->hvdcp_hw_inov_dis_votable,
 						UNSTANDARD_QC2_VOTER, true, 0);
 			rc = smblib_masked_write(chg, CMD_HVDCP_2_REG,
@@ -5070,6 +5085,11 @@ static void smblib_handle_hvdcp_3p0_auth_done(struct smb_charger *chg,
 				smblib_err(chg,
 					"Couldn't force 9V HVDCP rc=%d\n", rc);
 		}
+	} else if (apsd_result->pst == POWER_SUPPLY_TYPE_USB_HVDCP_3 ||
+		   (apsd_result->bit & QC_3P0_BIT)) {
+		vote(chg->hvdcp_hw_inov_dis_votable,
+				UNSTANDARD_QC2_VOTER, false, 0);
+		vote(chg->usb_icl_votable, HVDCP2_ICL_VOTER, false, 0);
 	}
 
 	if (apsd_result->bit & QC_2P0_BIT) {
@@ -5121,11 +5141,39 @@ static void smblib_handle_hvdcp_check_timeout(struct smb_charger *chg,
 				chg->dcp_icl_ua != -EINVAL, chg->dcp_icl_ua);
 
 		/*
-		 * if pd is not allowed, then set pd_active = false right here,
-		 * so that it starts the hvdcp engine
+		 * if pd is not allowed, or if this is a QC charger,
+		 * set pd_active = false right here to start the hvdcp engine
 		 */
-		if (!get_effective_result(chg->pd_allowed_votable))
+		if (qc_charger || !get_effective_result(chg->pd_allowed_votable))
 			__smblib_set_prop_pd_active(chg, 0);
+
+#if defined(CONFIG_MACH_XIAOMI_SDM845)
+		if (qc_charger && !chg->check_vbus_once) {
+			int current_ua = HVDCP2_CURRENT_UA;
+			int rc;
+
+			if (apsd_result->bit & QC_3P0_BIT) {
+				current_ua = HVDCP3_CURRENT_UA;
+				vote(chg->hvdcp_hw_inov_dis_votable,
+						UNSTANDARD_QC2_VOTER, false, 0);
+				vote(chg->usb_icl_votable, HVDCP2_ICL_VOTER, false, 0);
+			} else {
+				vote(chg->usb_icl_votable, HVDCP2_ICL_VOTER, true, 1000000);
+				vote(chg->hvdcp_hw_inov_dis_votable,
+						UNSTANDARD_QC2_VOTER, true, 0);
+				rc = smblib_masked_write(chg, CMD_HVDCP_2_REG,
+						FORCE_9V_BIT, FORCE_9V_BIT);
+				if (rc < 0)
+					smblib_err(chg,
+						"Couldn't force 9V HVDCP rc=%d\n", rc);
+			}
+
+			vote(chg->usb_icl_votable, LEGACY_UNKNOWN_VOTER, true, current_ua);
+			schedule_delayed_work(&chg->check_vbus_work,
+					msecs_to_jiffies(CHECK_VBUS_WORK_DELAY_MS));
+			chg->check_vbus_once = true;
+		}
+#endif
 	}
 
 	smblib_dbg(chg, PR_INTERRUPT, "IRQ: hvdcp_check_timeout %s\n",
@@ -5257,6 +5305,9 @@ static void smblib_handle_apsd_done(struct smb_charger *chg, bool rising)
 	apsd_result = smblib_update_usb_type(chg);
 
 #if defined(CONFIG_MACH_XIAOMI_SDM845)
+	if (apsd_result->bit & (QC_2P0_BIT | QC_3P0_BIT))
+		__smblib_set_prop_pd_active(chg, 0);
+
 	if (is_client_vote_enabled(chg->usb_icl_votable,
 							CC_FLOAT_VOTER)) {
 		if (chg->typec_mode != POWER_SUPPLY_TYPEC_NONE)
@@ -5690,6 +5741,7 @@ static void smblib_handle_typec_removal(struct smb_charger *chg)
 	chg->report_usb_absent = false;
 	chg->check_vbus_once = false;
 	chg->unstandard_hvdcp = false;
+	chg->vbus_retry_count = 0;
 #endif
 
 	/* write back the default FLOAT charger configuration */
@@ -6734,7 +6786,9 @@ static void smblib_charger_type_recheck(struct work_struct *work)
 		check_count--;
 	last_charger_type = chg->real_charger_type;
 
-	if (chg->real_charger_type == POWER_SUPPLY_TYPE_USB_HVDCP_3 ||
+	if (chg->real_charger_type == POWER_SUPPLY_TYPE_USB_HVDCP ||
+			chg->real_charger_type == POWER_SUPPLY_TYPE_USB_HVDCP_3 ||
+			chg->real_charger_type == POWER_SUPPLY_TYPE_USB_HVDCP_3P5 ||
 			chg->pd_active || (check_count >= TYPE_RECHECK_COUNT) ||
 			chg->check_vbus_once ||
 			((chg->real_charger_type == POWER_SUPPLY_TYPE_USB_FLOAT)
@@ -6768,7 +6822,7 @@ static void smblib_charger_type_recheck(struct work_struct *work)
 	hvdcp = stat & QC_CHARGER_BIT;
 	smblib_dbg(chg, PR_OEM, "hvdcp:%d chg->legacy:%d check_count:%d\n",
 			hvdcp, chg->legacy, check_count);
-	if (hvdcp && !chg->legacy) {
+	if (hvdcp) {
 		recheck_time = TYPE_RECHECK_TIME_20S;
 		__smblib_set_prop_pd_active(chg, 0);
 	} else
