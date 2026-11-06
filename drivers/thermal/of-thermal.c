@@ -188,7 +188,7 @@ static int of_thermal_get_temp(struct thermal_zone_device *tz,
 		*temp = tz->tzp->tracks_low ?
 				THERMAL_TEMP_INVALID_LOW :
 				THERMAL_TEMP_INVALID;
-		return 0;
+		return -EAGAIN;
 	}
 
 	return data->senps->ops->get_temp(data->senps->sensor_data, temp);

@@ -2783,6 +2783,18 @@ static int smblib_therm_charging(struct smb_charger *chg)
 		break;
 	}
 
+	if (chg->usb_psy_desc.type == POWER_SUPPLY_TYPE_USB_HVDCP ||
+	    chg->usb_psy_desc.type == POWER_SUPPLY_TYPE_USB_HVDCP_3 ||
+	    chg->usb_psy_desc.type == POWER_SUPPLY_TYPE_USB_PD) {
+		union power_supply_propval batt_temp = {0, };
+		if (smblib_get_prop_from_bms(chg, POWER_SUPPLY_PROP_TEMP, &batt_temp) == 0) {
+			int floor_ua = (chg->usb_psy_desc.type == POWER_SUPPLY_TYPE_USB_HVDCP) ?
+					2000000 : 2500000;
+			if (batt_temp.intval < 380 && thermal_icl_ua < floor_ua)
+				thermal_icl_ua = floor_ua;
+		}
+	}
+
 	if (chg->system_temp_level == 0) {
 		/* if therm_lvl_sel is 0, clear thermal voter */
 		rc = vote(chg->usb_icl_votable, THERMAL_DAEMON_VOTER, false, 0);
@@ -3578,7 +3590,7 @@ int smblib_get_prop_die_health(struct smb_charger *chg,
 #define CDP_CURRENT_UA			1500000
 #if defined(CONFIG_MACH_XIAOMI_SDM845)
 #define DCP_CURRENT_UA			1800000
-#define HVDCP2_CURRENT_UA		1500000
+#define HVDCP2_CURRENT_UA		2000000
 #define HVDCP3_CURRENT_UA		2750000
 #else
 #define DCP_CURRENT_UA			1500000
@@ -5243,7 +5255,7 @@ static void smblib_force_legacy_icl(struct smb_charger *chg, int pst)
 		break;
 	case POWER_SUPPLY_TYPE_USB_HVDCP:
 #if defined(CONFIG_MACH_XIAOMI_SDM845)
-		vote(chg->usb_icl_votable, LEGACY_UNKNOWN_VOTER, true, 1500000);
+		vote(chg->usb_icl_votable, LEGACY_UNKNOWN_VOTER, true, HVDCP2_CURRENT_UA);
 		break;
 #endif
 	case POWER_SUPPLY_TYPE_USB_HVDCP_3:
