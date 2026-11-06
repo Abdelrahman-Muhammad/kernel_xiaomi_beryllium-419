@@ -800,27 +800,46 @@ static int fg_get_prop_capacity(struct fg_dev *fg, int *val)
 
 	if (is_batt_empty(fg)) {
 		*val = EMPTY_SOC;
-		return 0;
-	}
-
-	if (fg->charge_full) {
+	} else if (fg->charge_full) {
 		*val = FULL_CAPACITY;
 		return 0;
-	}
-
-	rc = fg_get_msoc(fg, &msoc);
-	if (rc < 0)
-		return rc;
+	} else {
+		rc = fg_get_msoc(fg, &msoc);
+		if (rc < 0)
+			return rc;
 
 #if defined(CONFIG_MACH_XIAOMI_SDM845)
-	if (fg->empty_restart_fg && (msoc == 0))
-		msoc = EMPTY_REPORT_SOC;
+		if (fg->empty_restart_fg && (msoc == 0))
+			msoc = EMPTY_REPORT_SOC;
 #endif
 
-	if (chip->dt.linearize_soc && fg->delta_soc > 0)
-		*val = fg->maint_soc;
-	else
-		*val = msoc;
+		if (chip->dt.linearize_soc && fg->delta_soc > 0)
+			*val = fg->maint_soc;
+		else
+			*val = msoc;
+	}
+
+	/*
+	 * Never report 0 % if the physical cell voltage is at or above
+	 * the hardware cutoff threshold (typically 3.4 V).  If the fuel
+	 * gauge reports 0 %, clamp to 1 % to prevent an immediate
+	 * shutdown,battery, and schedule a restart to recalibrate from OCV.
+	 */
+	if (*val <= 0) {
+		int vbatt_uv = 0;
+		if (fg_get_battery_voltage(fg, &vbatt_uv) == 0 &&
+		    vbatt_uv >= chip->dt.cutoff_volt_mv * 1000) {
+			pr_warn_ratelimited("FG: capacity 0%% rejected, vbatt=%d uV >= cutoff=%d uV. Clamping to 1%%\n",
+				vbatt_uv, chip->dt.cutoff_volt_mv * 1000);
+			*val = 1;
+#if defined(CONFIG_MACH_XIAOMI_SDM845)
+			if (!fg->empty_restart_fg && !fg->fg_restarting)
+				schedule_delayed_work(&fg->empty_restart_fg_work,
+						      msecs_to_jiffies(100));
+#endif
+		}
+	}
+
 	return 0;
 }
 
@@ -3845,6 +3864,12 @@ static int fg_psy_get_property(struct power_supply *psy,
 		if (fg->param.batt_soc >= 0)
 			pval->intval = fg->param.batt_soc;
 #endif
+		if (pval->intval <= 0) {
+			int vbatt_uv = 0;
+			if (fg_get_battery_voltage(fg, &vbatt_uv) == 0 &&
+			    vbatt_uv >= chip->dt.cutoff_volt_mv * 1000)
+				pval->intval = 1;
+		}
 		break;
 	case POWER_SUPPLY_PROP_REAL_CAPACITY:
 		rc = fg_get_prop_real_capacity(fg, &pval->intval);
@@ -4899,8 +4924,23 @@ static irqreturn_t fg_delta_msoc_irq_handler(int irq, void *data)
 static irqreturn_t fg_empty_soc_irq_handler(int irq, void *data)
 {
 	struct fg_dev *fg = data;
+	struct fg_gen3_chip *chip = container_of(fg, struct fg_gen3_chip, fg);
+	int vbatt_uv = 0;
 
 	fg_dbg(fg, FG_IRQ, "irq %d triggered\n", irq);
+
+	if (fg_get_battery_voltage(fg, &vbatt_uv) == 0 &&
+	    vbatt_uv >= chip->dt.cutoff_volt_mv * 1000) {
+		pr_warn_ratelimited("FG: spurious empty IRQ with healthy vbatt=%d uV >= cutoff=%d uV\n",
+			vbatt_uv, chip->dt.cutoff_volt_mv * 1000);
+#if defined(CONFIG_MACH_XIAOMI_SDM845)
+		if (!fg->empty_restart_fg && !fg->fg_restarting)
+			schedule_delayed_work(&fg->empty_restart_fg_work,
+					      msecs_to_jiffies(100));
+#endif
+		return IRQ_HANDLED;
+	}
+
 	if (batt_psy_initialized(fg))
 		power_supply_changed(fg->batt_psy);
 
@@ -5756,6 +5796,8 @@ static void empty_restart_fg_work(struct work_struct *work)
 				return;
 			}
 			pr_info("FG restart done\n");
+			fg->param.batt_soc = -EINVAL;
+			fg->param.update_now = true;
 			if (batt_psy_initialized(fg))
 				power_supply_changed(fg->batt_psy);
 		} else {
@@ -5881,6 +5923,17 @@ static void fg_battery_soc_smooth_tracking(struct fg_dev *fg)
 		fg->param.update_now = false;
 	} else {
 		last_batt_soc = fg->param.batt_raw_soc;
+	}
+
+	if (last_batt_soc <= 1 && fg->param.batt_raw_soc > 1)
+		last_batt_soc = fg->param.batt_raw_soc;
+
+	if (last_batt_soc <= 0) {
+		struct fg_gen3_chip *chip = container_of(fg, struct fg_gen3_chip, fg);
+		int vbatt_uv = 0;
+		if (fg_get_battery_voltage(fg, &vbatt_uv) == 0 &&
+		    vbatt_uv >= chip->dt.cutoff_volt_mv * 1000)
+			last_batt_soc = 1;
 	}
 
 	if (fg->param.batt_soc != last_batt_soc) {
