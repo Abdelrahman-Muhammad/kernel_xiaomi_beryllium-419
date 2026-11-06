@@ -5071,6 +5071,7 @@ static void smblib_handle_hvdcp_3p0_auth_done(struct smb_charger *chg,
 	apsd_result = smblib_get_apsd_result(chg);
 
 #if defined(CONFIG_MACH_XIAOMI_SDM845)
+	vote(chg->pd_disallowed_votable_indirect, HVDCP_TIMEOUT_VOTER, true, 0);
 	__smblib_set_prop_pd_active(chg, 0);
 
 	if (apsd_result->pst == POWER_SUPPLY_TYPE_USB_HVDCP) {
@@ -5122,10 +5123,10 @@ static void smblib_handle_hvdcp_check_timeout(struct smb_charger *chg,
 {
 	const struct apsd_result *apsd_result = smblib_get_apsd_result(chg);
 
-	/* Hold off PD only until hvdcp 2.0 detection timeout */
+	/* Hold off PD until hvdcp timeout; disallow PD if QC charger detected */
 	if (rising) {
 		vote(chg->pd_disallowed_votable_indirect, HVDCP_TIMEOUT_VOTER,
-								false, 0);
+								qc_charger, 0);
 
 		/* enable HDC and ICL irq for QC2/3 charger */
 		if (qc_charger)

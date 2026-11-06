@@ -2773,19 +2773,41 @@ static void handle_state_snk_wait_for_capabilities(struct usbpd *pd,
 		pd->src_cap_id++;
 
 		usbpd_set_state(pd, PE_SNK_EVALUATE_CAPABILITY);
-	} else if (pd->hard_reset_count < 3) {
-		usbpd_set_state(pd, PE_SNK_HARD_RESET);
 	} else {
-		usbpd_dbg(&pd->dev, "Sink hard reset count exceeded, disabling PD\n");
+		union power_supply_propval pval = {0};
+		int rc = power_supply_get_property(pd->usb_psy,
+				POWER_SUPPLY_PROP_REAL_TYPE, &pval);
 
-		val.intval = 0;
-		power_supply_set_property(pd->usb_psy,
-				POWER_SUPPLY_PROP_PD_IN_HARD_RESET,
-				&val);
+		if (!rc && (pval.intval == POWER_SUPPLY_TYPE_USB_HVDCP ||
+			    pval.intval == POWER_SUPPLY_TYPE_USB_HVDCP_3 ||
+			    pval.intval == POWER_SUPPLY_TYPE_USB_DCP)) {
+			usbpd_dbg(&pd->dev, "Non-PD charger (type %d) detected, skip hard reset and disable PD\n",
+				pval.intval);
+			val.intval = 0;
+			power_supply_set_property(pd->usb_psy,
+					POWER_SUPPLY_PROP_PD_IN_HARD_RESET,
+					&val);
 
-		val.intval = POWER_SUPPLY_PD_INACTIVE;
-		power_supply_set_property(pd->usb_psy,
-				POWER_SUPPLY_PROP_PD_ACTIVE, &val);
+			val.intval = POWER_SUPPLY_PD_INACTIVE;
+			power_supply_set_property(pd->usb_psy,
+					POWER_SUPPLY_PROP_PD_ACTIVE, &val);
+			return;
+		}
+
+		if (pd->hard_reset_count < 3) {
+			usbpd_set_state(pd, PE_SNK_HARD_RESET);
+		} else {
+			usbpd_dbg(&pd->dev, "Sink hard reset count exceeded, disabling PD\n");
+
+			val.intval = 0;
+			power_supply_set_property(pd->usb_psy,
+					POWER_SUPPLY_PROP_PD_IN_HARD_RESET,
+					&val);
+
+			val.intval = POWER_SUPPLY_PD_INACTIVE;
+			power_supply_set_property(pd->usb_psy,
+					POWER_SUPPLY_PROP_PD_ACTIVE, &val);
+		}
 	}
 }
 
