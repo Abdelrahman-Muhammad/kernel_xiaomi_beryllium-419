@@ -656,6 +656,10 @@ static int fg_get_battery_esr(struct fg_dev *fg, int *val)
  */
 #define FG_MIN_PLAUSIBLE_VBATT_UV	2500000
 #define FG_EMPTY_SANITY_MSOC		10
+#define FG_VETO_MSOC_MAX		2
+#define FG_VETO_VBATT_UV		3650000
+#define FG_VETO_IBATT_MAX_UA		500000
+#define FG_VETO_CC_PCT_MIN		15
 
 static bool is_batt_empty(struct fg_dev *fg)
 {
@@ -807,6 +811,26 @@ static int fg_get_prop_capacity(struct fg_dev *fg, int *val)
 		rc = fg_get_msoc(fg, &msoc);
 		if (rc < 0)
 			return rc;
+
+		if (msoc <= FG_VETO_MSOC_MAX) {
+			int vbatt_uv = 0, ibatt_ua = 0, cc_uah = 0;
+
+			if (!fg_get_battery_voltage(fg, &vbatt_uv) &&
+			    !fg_get_battery_current(fg, &ibatt_ua) &&
+			    !fg_get_charge_counter(fg, &cc_uah) &&
+			    chip->cl.learned_cc_uah > 0 && cc_uah > 0) {
+				int cc_pct = div_u64((u64)cc_uah * 100,
+						     chip->cl.learned_cc_uah);
+
+				if (vbatt_uv >= FG_VETO_VBATT_UV &&
+				    abs(ibatt_ua) < FG_VETO_IBATT_MAX_UA &&
+				    cc_pct >= FG_VETO_CC_PCT_MIN) {
+					pr_warn_ratelimited("fg: msoc %d vs cc %d%% at %d uV, vetoed\n",
+							    msoc, cc_pct, vbatt_uv);
+					msoc = clamp(cc_pct, 2, 100);
+				}
+			}
+		}
 
 #if defined(CONFIG_MACH_XIAOMI_SDM845)
 		if (fg->empty_restart_fg && (msoc == 0))
@@ -5717,6 +5741,21 @@ static void soc_work_fn(struct work_struct *work)
 
 	cycle_count = fg_get_cycle_count(fg);
 
+	{
+		struct fg_gen3_chip *chip = container_of(fg, struct fg_gen3_chip, fg);
+		int cc_uah = 0, cc_pct = 0, m_pct = 0;
+
+		if (!fg_get_msoc(fg, &m_pct) &&
+		    !fg_get_charge_counter(fg, &cc_uah) &&
+		    chip->cl.learned_cc_uah > 0 && cc_uah > 0) {
+			cc_pct = div_u64((u64)cc_uah * 100, chip->cl.learned_cc_uah);
+			if (abs(m_pct - cc_pct) > 20)
+				pr_warn_ratelimited("FG: divergence: msoc=%d cc=%d%% vbatt=%d uV curr=%d uA temp=%d prof_status=%d empty_restart=%d\n",
+					m_pct, cc_pct, volt_uv, curr_ua, temp,
+					fg->profile_load_status, fg->empty_restart_fg);
+		}
+	}
+
 	rc = fg_sram_read(fg, 0, 0, buf_top, 4, FG_IMA_DEFAULT);
 	if (rc < 0) {
 		pr_err("sram read failed: address=0, rc=%d\n", rc);
@@ -5732,7 +5771,7 @@ static void soc_work_fn(struct work_struct *work)
 		pr_err("sram read failed: address=79, rc=%d\n", rc);
 		return;
 	}
-	pr_info("adjust_soc: s %d r %d i %d v %d t %d cc %d m 0x%02x\n",
+	pr_debug("adjust_soc: s %d r %d i %d v %d t %d cc %d m 0x%02x\n",
 			soc,
 			esr_uohms,
 			curr_ua,
@@ -5740,9 +5779,9 @@ static void soc_work_fn(struct work_struct *work)
 			temp,
 			cycle_count,
 			msoc);
-	pr_info("adjust_soc: 000: %02x, %02x, %02x, %02x\n", buf_top[0], buf_top[1], buf_top[2], buf_top[3]);
-	pr_info("adjust_soc: 019: %02x, %02x, %02x, %02x\n", buf_auto[0], buf_auto[1], buf_auto[2], buf_auto[3]);
-	pr_info("adjust_soc: 079: %02x, %02x, %02x, %02x\n", buf_profile[0], buf_profile[1], buf_profile[2], buf_profile[3]);
+	pr_debug("adjust_soc: 000: %02x, %02x, %02x, %02x\n", buf_top[0], buf_top[1], buf_top[2], buf_top[3]);
+	pr_debug("adjust_soc: 019: %02x, %02x, %02x, %02x\n", buf_auto[0], buf_auto[1], buf_auto[2], buf_auto[3]);
+	pr_debug("adjust_soc: 079: %02x, %02x, %02x, %02x\n", buf_profile[0], buf_profile[1], buf_profile[2], buf_profile[3]);
 
 	if (temp < 450 && fg->last_batt_temp >= 450) {
 		/* follow the way that fg_notifier_cb use wake lock */
@@ -5854,7 +5893,7 @@ static int calculate_average_current(struct fg_dev *fg)
 	}
 
 unchanged:
-	pr_info("current_now_ma=%d averaged_iavg_ma=%d\n",
+	pr_debug("current_now_ma=%d averaged_iavg_ma=%d\n",
 				fg->param.batt_ma, fg->param.batt_ma_avg);
 	return fg->param.batt_ma_avg;
 }
@@ -6247,6 +6286,10 @@ static int fg_gen3_probe(struct platform_device *pdev)
 	}
 
 	rc = fg_get_battery_voltage(fg, &volt_uv);
+	if (rc < 0 || volt_uv < FG_MIN_PLAUSIBLE_VBATT_UV) {
+		msleep(20);
+		rc = fg_get_battery_voltage(fg, &volt_uv);
+	}
 	if (!rc)
 		rc = fg_get_prop_capacity(fg, &msoc);
 
@@ -6276,7 +6319,7 @@ static int fg_gen3_probe(struct platform_device *pdev)
          * try to power on in normal temperature room.
          */
 	if ((volt_uv >= VBAT_RESTART_FG_EMPTY_UV)
-			   && (msoc == 0) && (batt_temp >= TEMP_THR_RESTART_FG))
+			   && (msoc <= 1) && (batt_temp >= TEMP_THR_RESTART_FG))
 		schedule_delayed_work(&fg->empty_restart_fg_work,
 				 msecs_to_jiffies(RESTART_FG_START_WORK_MS));
 #endif
