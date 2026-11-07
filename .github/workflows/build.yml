@@ -66,6 +66,13 @@ jobs:
           content = content.replace("#include \"manager/throne_tracker.h\"\n", "#include \"manager/throne_tracker.h\"\n#include \"preinit/preinit.h\"\n")
           with open(path, "w") as f:
               f.write(content)
+
+          path_su = "drivers/kernelsu/feature/sucompat.c"
+          with open(path_su, "r") as f:
+              content_su = f.read()
+          content_su = content_su.replace("pr_info(\"mark no sucompat checks for pid:", "pr_debug(\"mark no sucompat checks for pid:")
+          with open(path_su, "w") as f:
+              f.write(content_su)
           '
 
       - name: Configure Kernel

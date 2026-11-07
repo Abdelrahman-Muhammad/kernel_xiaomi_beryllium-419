@@ -1640,7 +1640,7 @@ static int fw_parse_configuration_data(struct tas2559_priv *pTAS2559,
 
 			pConfiguration->mnPLLSrcRate = fw_convert_number(pData);
 			pData += 4;
-			dev_err(pTAS2559->dev, "line:%d, pData: 0x%x, 0x%x, 0x%x, 0x%x", __LINE__, pData[0], pData[1], pData[2], pData[3]);
+			dev_dbg(pTAS2559->dev, "line:%d, pData: 0x%x, 0x%x, 0x%x, 0x%x", __LINE__, pData[0], pData[1], pData[2], pData[3]);
 		}
 
 		n = fw_parse_data(pTAS2559, pFirmware, &(pConfiguration->mData), pData);
