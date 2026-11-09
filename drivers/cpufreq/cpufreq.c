@@ -738,7 +738,35 @@ static ssize_t store_##file_name					\
 	return ret ? ret : count;					\
 }
 
-store_one(scaling_min_freq, min);
+static ssize_t store_scaling_min_freq
+(struct cpufreq_policy *policy, const char *buf, size_t count)
+{
+	int ret, temp;
+	struct cpufreq_policy new_policy;
+
+	memcpy(&new_policy, policy, sizeof(*policy));
+	new_policy.min = policy->user_policy.min;
+	new_policy.max = policy->user_policy.max;
+
+	ret = sscanf(buf, "%u", &new_policy.min);
+	if (ret != 1)
+		return -EINVAL;
+
+	/*
+	 * Keep the hardware minimum floor (300 MHz on little cores) when
+	 * userspace init scripts try to pin scaling_min_freq higher.
+	 */
+	if (new_policy.min > policy->cpuinfo.min_freq)
+		new_policy.min = policy->cpuinfo.min_freq;
+
+	temp = new_policy.min;
+	ret = cpufreq_set_policy(policy, &new_policy);
+	if (!ret)
+		policy->user_policy.min = temp;
+
+	return ret ? ret : count;
+}
+
 store_one(scaling_max_freq, max);
 
 /**

@@ -82,6 +82,21 @@ static int set_cpu_min_freq(const char *buf, const struct kernel_param *kp)
 		if (cpu_possible(cpu)) {
 			i_cpu_stats = &per_cpu(msm_perf_cpu_stats, cpu);
 
+			/*
+			 * Save battery on daily workloads:
+			 * - Let big cores (CPU 4-7) scale by real schedutil
+			 *   load instead of pinning min_freq via PerfHAL.
+			 * - Allow little cores (CPU 0-3) to drop to 300 MHz
+			 *   at idle (ignore <= 576 MHz floor) and cap short
+			 *   PerfHAL boosts to 1056 MHz.
+			 */
+			if (cpu >= 4)
+				val = 0;
+			else if (val <= 576000)
+				val = 0;
+			else if (val > 1056000)
+				val = 1056000;
+
 			i_cpu_stats->min = val;
 			cpumask_set_cpu(cpu, limit_mask);
 		}

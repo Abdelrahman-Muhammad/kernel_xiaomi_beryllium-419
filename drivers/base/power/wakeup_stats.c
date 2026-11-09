@@ -145,7 +145,13 @@ static struct device *wakeup_source_device_create(struct device *parent,
 	device_initialize(dev);
 	dev->devt = MKDEV(0, 0);
 	dev->class = wakeup_class;
-	dev->parent = parent;
+	/*
+	 * Keep parent NULL so sysfs registers every wakeup node under
+	 * /sys/devices/virtual/wakeup/wakeupN. Android plat_sepolicy labels
+	 * that path u:object_r:sysfs_wakeup:s0, avoiding SELinux denials
+	 * when vendor sepolicy omits a parent device path.
+	 */
+	dev->parent = NULL;
 	dev->groups = wakeup_source_groups;
 	dev->release = device_create_release;
 	dev_set_drvdata(dev, ws);

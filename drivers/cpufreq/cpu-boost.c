@@ -49,21 +49,49 @@ static struct work_struct input_boost_work;
 
 static bool input_boost_enabled;
 
-static unsigned int input_boost_ms = 40;
+static unsigned int input_boost_ms = 20;
 show_one(input_boost_ms);
-store_one(input_boost_ms);
+
+static ssize_t store_input_boost_ms
+(struct kobject *kobj, struct kobj_attribute *attr,
+const char *buf, size_t count)
+{
+	unsigned int val;
+
+	if (sscanf(buf, "%u", &val) != 1)
+		return -EINVAL;
+
+	/* Cap touch boost duration to 20 ms to save battery */
+	input_boost_ms = min(val, 20U);
+	return count;
+}
 cpu_boost_attr_rw(input_boost_ms);
 
 static unsigned int sched_boost_on_input;
 show_one(sched_boost_on_input);
-store_one(sched_boost_on_input);
+
+static ssize_t store_sched_boost_on_input
+(struct kobject *kobj, struct kobj_attribute *attr,
+const char *buf, size_t count)
+{
+	/* Keep sched_boost_on_input disabled so touch does not wake big cores */
+	sched_boost_on_input = 0;
+	return count;
+}
 cpu_boost_attr_rw(sched_boost_on_input);
 
 static bool sched_boost_active;
 
 static struct delayed_work input_boost_rem;
 static u64 last_input_time;
-#define MIN_INPUT_INTERVAL (150 * USEC_PER_MSEC)
+#define MIN_INPUT_INTERVAL (250 * USEC_PER_MSEC)
+
+static unsigned int clamp_boost_freq(unsigned int cpu, unsigned int freq)
+{
+	if (cpu >= 4)
+		return 0;
+	return min(freq, 748800U);
+}
 
 static ssize_t store_input_boost_freq(struct kobject *kobj,
 				      struct kobj_attribute *attr,
@@ -82,7 +110,8 @@ static ssize_t store_input_boost_freq(struct kobject *kobj,
 		if (sscanf(buf, "%u\n", &val) != 1)
 			return -EINVAL;
 		for_each_possible_cpu(i)
-			per_cpu(sync_info, i).input_boost_freq = val;
+			per_cpu(sync_info, i).input_boost_freq =
+				clamp_boost_freq(i, val);
 		goto check_enable;
 	}
 
@@ -97,7 +126,8 @@ static ssize_t store_input_boost_freq(struct kobject *kobj,
 		if (cpu >= num_possible_cpus())
 			return -EINVAL;
 
-		per_cpu(sync_info, cpu).input_boost_freq = val;
+		per_cpu(sync_info, cpu).input_boost_freq =
+			clamp_boost_freq(cpu, val);
 		cp = strnchr(cp, PAGE_SIZE - (cp - buf), ' ');
 		cp++;
 	}
@@ -333,7 +363,8 @@ static int cpu_boost_init(void)
 	int cpu, ret;
 	struct cpu_sync *s;
 
-	cpu_boost_wq = alloc_workqueue("cpuboost_wq", WQ_HIGHPRI, 0);
+	cpu_boost_wq = alloc_workqueue("cpuboost_wq",
+				       WQ_HIGHPRI | WQ_FREEZABLE, 0);
 	if (!cpu_boost_wq)
 		return -EFAULT;
 
