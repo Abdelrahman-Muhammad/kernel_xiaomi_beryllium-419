@@ -830,6 +830,9 @@ static int fg_direct_mem_release(struct fg_dev *fg)
 	}
 
 	mask = MEM_ARB_REQ_BIT;
+	/* PMI8998 (4.9) holds low latency only while it owns SRAM */
+	if (fg->version == GEN3_FG)
+		mask |= MEM_ARB_LO_LATENCY_EN_BIT;
 	rc = fg_masked_write(fg, MEM_IF_MEM_ARB_CFG(fg), mask, val);
 	if (rc < 0) {
 		pr_err("failed to configure mem_if_mem_arb_cfg rc:%d\n", rc);
@@ -856,6 +859,8 @@ static int fg_direct_mem_request(struct fg_dev *fg)
 	}
 
 	val = mask = MEM_ARB_REQ_BIT;
+	if (fg->version == GEN3_FG)
+		val = mask |= MEM_ARB_LO_LATENCY_EN_BIT;
 	rc = fg_masked_write(fg, MEM_IF_MEM_ARB_CFG(fg), mask, val);
 	if (rc < 0) {
 		pr_err("failed to configure mem_if_mem_arb_cfg rc:%d\n", rc);
@@ -1298,6 +1303,14 @@ static int fg_dma_init(struct fg_dev *fg)
 			rc);
 		return rc;
 	}
+
+	/*
+	 * "low latency always" + PEEK_MUX4 are PM8150B DMA/ADC workarounds.
+	 * On PMI8998 (4.9 stock) low latency is set only per request, else
+	 * the host keeps priority over the FG algorithm on the SRAM bus.
+	 */
+	if (fg->version == GEN3_FG)
+		return 0;
 
 	/* Set low latency always and clear log bit */
 	rc = fg_masked_write(fg, MEM_IF_MEM_ARB_CFG(fg),

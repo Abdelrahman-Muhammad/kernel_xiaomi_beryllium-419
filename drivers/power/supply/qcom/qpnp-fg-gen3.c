@@ -2214,7 +2214,7 @@ static int fg_esr_filter_config(struct fg_dev *fg, int batt_temp,
 static void esr_filter_work(struct work_struct *work)
 {
 	struct fg_dev *fg = container_of(work,
-			struct fg_dev, status_change_work);
+			struct fg_dev, esr_filter_work);
 	int rc, batt_temp;
 
 	rc = fg_get_battery_temp(fg, &batt_temp);
@@ -2485,8 +2485,8 @@ static void clear_cycle_counter(struct fg_dev *fg)
 		chip->cyc_ctr.last_soc[i] = 0;
 	}
 	rc = fg_sram_write(fg, CYCLE_COUNT_WORD, CYCLE_COUNT_OFFSET,
-			(u8 *)&chip->cyc_ctr.count,
-			sizeof(chip->cyc_ctr.count) / (sizeof(u8 *)),
+			(u8 *)chip->cyc_ctr.count,
+			sizeof(chip->cyc_ctr.count),
 			FG_IMA_DEFAULT);
 	if (rc < 0)
 		pr_err("failed to clear cycle counter rc=%d\n", rc);
@@ -3107,6 +3107,10 @@ static void profile_load_work(struct work_struct *work)
 		goto out;
 	}
 
+#if defined(CONFIG_MACH_XIAOMI_SDM845)
+	/* 4.9 inits step-chg / SW JEITA on every boot */
+	qcom_step_chg_init(fg->dev, 0, 1, 1);
+#endif
 	if (!fg->profile_available)
 		goto out;
 
@@ -3145,9 +3149,6 @@ static void profile_load_work(struct work_struct *work)
 		pr_err("failed to write profile integrity rc=%d\n", rc);
 		goto out;
 	}
-#if defined(CONFIG_MACH_XIAOMI_SDM845)
-	qcom_step_chg_init(fg->dev, 0 , 1, 1);
-#endif
 
 	rc = fg_restart(fg, SOC_READY_WAIT_TIME_MS);
 	if (rc < 0) {
@@ -5937,6 +5938,10 @@ static void fg_battery_soc_smooth_tracking(struct fg_dev *fg)
 
 	soc_changed = min(1, delta_time);
 
+	if (soc_changed && last_batt_soc >= 0 &&
+	    abs(last_batt_soc - fg->param.batt_raw_soc) > 5)
+		soc_changed = abs(last_batt_soc - fg->param.batt_raw_soc) / 4;
+
 	if (last_batt_soc >= 0) {
 		if (last_batt_soc < fg->param.batt_raw_soc &&
 					fg->param.batt_ma < 0)
@@ -5950,6 +5955,10 @@ static void fg_battery_soc_smooth_tracking(struct fg_dev *fg)
 		  /* Battery in discharging status
 		   * update the soc when resuming device
 		   */
+			last_batt_soc = fg->param.update_now ?
+			  fg->param.batt_raw_soc : last_batt_soc - soc_changed;
+		else if (last_batt_soc > fg->param.batt_raw_soc + 3)
+		  /* shown SOC above the real one while charging */
 			last_batt_soc = fg->param.update_now ?
 			  fg->param.batt_raw_soc : last_batt_soc - soc_changed;
 		else if (last_batt_soc != 100

@@ -1720,13 +1720,25 @@ static ssize_t
 thermal_sconfig_store(struct device *dev,
 				      struct device_attribute *attr, const char *buf, size_t len)
 {
-	int val = -1;
+	int ret, val = -1;
 
-	val = simple_strtol(buf, NULL, 10);
+	ret = kstrtoint(buf, 10, &val);
+	if (ret)
+		return ret;
 
 	atomic_set(&switch_mode, val);
+	sysfs_notify(&thermal_message_dev.kobj, NULL, "sconfig");
 
 	return len;
+}
+
+static void sconfig_notify_fn(struct work_struct *work);
+static DECLARE_DEFERRABLE_WORK(sconfig_notify_work, sconfig_notify_fn);
+
+static void sconfig_notify_fn(struct work_struct *work)
+{
+	sysfs_notify(&thermal_message_dev.kobj, NULL, "sconfig");
+	schedule_delayed_work(&sconfig_notify_work, 30 * HZ);
 }
 
 static DEVICE_ATTR(sconfig, 0664,
@@ -1774,6 +1786,25 @@ thermal_temp_state_store(struct device *dev,
 static DEVICE_ATTR(temp_state, 0664,
 		   thermal_temp_state_show, thermal_temp_state_store);
 
+static ssize_t
+thermal_board_sensor_temp_show(struct device *dev,
+				      struct device_attribute *attr, char *buf)
+{
+	static const char * const zones[] = { "quiet_therm", "xo_therm" };
+	struct thermal_zone_device *tz;
+	int i, temp;
+
+	for (i = 0; i < ARRAY_SIZE(zones); i++) {
+		tz = thermal_zone_get_zone_by_name(zones[i]);
+		if (!IS_ERR(tz) && !thermal_zone_get_temp(tz, &temp) && temp > -40000)
+			return snprintf(buf, PAGE_SIZE, "%d\n", temp);
+	}
+	return -ENODATA;
+}
+
+static DEVICE_ATTR(board_sensor_temp, 0444,
+		   thermal_board_sensor_temp_show, NULL);
+
 static int create_thermal_message_node(void) {
 	int ret = 0;
 
@@ -1793,6 +1824,8 @@ static int create_thermal_message_node(void) {
 		ret = sysfs_create_file(&thermal_message_dev.kobj, &dev_attr_sconfig.attr);
 		if (ret < 0)
 			pr_warn("Thermal: create sconfig node failed\n");
+		else
+			schedule_delayed_work(&sconfig_notify_work, 30 * HZ);
 
 		ret = sysfs_create_file(&thermal_message_dev.kobj, &dev_attr_boost.attr);
 		if (ret < 0)
@@ -1801,12 +1834,18 @@ static int create_thermal_message_node(void) {
 		ret = sysfs_create_file(&thermal_message_dev.kobj, &dev_attr_temp_state.attr);
 		if (ret < 0)
 			pr_warn("Thermal: create temp state node failed\n");
+
+		ret = sysfs_create_file(&thermal_message_dev.kobj, &dev_attr_board_sensor_temp.attr);
+		if (ret < 0)
+			pr_warn("Thermal: create board sensor temp node failed\n");
 	}
 
 	return ret;
 }
 
 static void destroy_thermal_message_node(void) {
+	sysfs_remove_file(&thermal_message_dev.kobj, &dev_attr_board_sensor_temp.attr);
+	cancel_delayed_work_sync(&sconfig_notify_work);
 	sysfs_remove_file(&thermal_message_dev.kobj, &dev_attr_temp_state.attr);
 	sysfs_remove_file(&thermal_message_dev.kobj, &dev_attr_sconfig.attr);
 	sysfs_remove_file(&thermal_message_dev.kobj, &dev_attr_boost.attr);

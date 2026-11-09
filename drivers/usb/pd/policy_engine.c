@@ -4686,20 +4686,25 @@ void usbpd_vbus_sm(struct work_struct *w)
 	struct usbpd *pd = pd_lobal;
 	/* container_of(w, struct usbpd, vbus_work) */
 
-	pr_err("usbpd_vbus_sm handle state %s, vbus %d\n",
-			usbpd_state_strings[pd->current_state],pd->vbus_enabled);
+	if (!pd)
+		return;
 
-	/* to be done, pd->sm_queued = false; */
+	usbpd_dbg(&pd->dev, "usbpd_vbus_sm handle state %s, vbus %d\n",
+			usbpd_state_strings[pd->current_state], pd->vbus_enabled);
+
 	pd_vbus_reset(pd);
+	pm_relax(&pd->dev);
 }
 
 void kick_usbpd_vbus_sm(void)
 {
+	if (!pd_lobal)
+		return;
+
 	pm_stay_awake(&pd_lobal->dev);
 
-	/* to be done pd_lobal->sm_queued = true;*/
-	pr_err("kick_usbpd_vbus_sm handle state %s, vbus %d\n",
-			usbpd_state_strings[pd_lobal->current_state],pd_lobal->vbus_enabled);
+	usbpd_dbg(&pd_lobal->dev, "kick_usbpd_vbus_sm handle state %s, vbus %d\n",
+			usbpd_state_strings[pd_lobal->current_state], pd_lobal->vbus_enabled);
 
 	queue_delayed_work(pd_lobal->wq, &(pd_lobal->vbus_work), msecs_to_jiffies(200));
 }

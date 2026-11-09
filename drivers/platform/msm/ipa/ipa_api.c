@@ -3459,7 +3459,7 @@ EXPORT_SYMBOL(ipa_get_ipc_logbuf_low);
 void ipa_assert(void)
 {
 	pr_err("IPA: unrecoverable error has occurred, asserting\n");
-	BUG();
+	WARN_ON(1);
 }
 
 /**

@@ -746,7 +746,7 @@ static int qpnp_haptics_play(struct hap_chip *chip, bool enable)
 
 #if defined(CONFIG_MACH_XIAOMI_SDM845)
 		hrtimer_start(&chip->stop_timer,
-			ktime_set(40 / MSEC_PER_SEC,
+			ktime_set(time_ms / MSEC_PER_SEC,
 			(time_ms % MSEC_PER_SEC) * NSEC_PER_MSEC),
 			HRTIMER_MODE_REL);
 

@@ -105,7 +105,7 @@ static DEFINE_PER_CPU(struct lpm_history, hist);
 static DEFINE_PER_CPU(struct ipi_history, cpu_ipi_history);
 static DEFINE_PER_CPU(struct lpm_cpu*, cpu_lpm);
 static bool suspend_in_progress;
-static struct hrtimer lpm_hrtimer;
+static DEFINE_PER_CPU(struct hrtimer, lpm_hrtimer);
 static DEFINE_PER_CPU(struct hrtimer, histtimer);
 static DEFINE_PER_CPU(struct hrtimer, biastimer);
 static struct lpm_debug *lpm_debug;
@@ -430,8 +430,8 @@ static void msm_pm_set_timer(uint32_t modified_time_us)
 	u64 modified_time_ns = modified_time_us * NSEC_PER_USEC;
 	ktime_t modified_ktime = ns_to_ktime(modified_time_ns);
 
-	lpm_hrtimer.function = lpm_hrtimer_cb;
-	hrtimer_start(&lpm_hrtimer, modified_ktime, HRTIMER_MODE_REL_PINNED);
+	hrtimer_start(this_cpu_ptr(&lpm_hrtimer), modified_ktime,
+		      HRTIMER_MODE_REL_PINNED);
 }
 
 static void biastimer_cancel(void)
@@ -1799,8 +1799,10 @@ static int lpm_probe(struct platform_device *pdev)
 	 */
 	suspend_set_ops(&lpm_suspend_ops);
 	s2idle_set_ops(&lpm_s2idle_ops);
-	hrtimer_init(&lpm_hrtimer, CLOCK_MONOTONIC, HRTIMER_MODE_REL);
 	for_each_possible_cpu(cpu) {
+		cpu_histtimer = &per_cpu(lpm_hrtimer, cpu);
+		hrtimer_init(cpu_histtimer, CLOCK_MONOTONIC, HRTIMER_MODE_REL);
+		cpu_histtimer->function = lpm_hrtimer_cb;
 		cpu_histtimer = &per_cpu(histtimer, cpu);
 		hrtimer_init(cpu_histtimer, CLOCK_MONOTONIC, HRTIMER_MODE_REL);
 		cpu_histtimer = &per_cpu(biastimer, cpu);

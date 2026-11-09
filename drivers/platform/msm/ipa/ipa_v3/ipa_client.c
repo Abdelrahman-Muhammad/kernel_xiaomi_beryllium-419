@@ -136,7 +136,7 @@ int ipa3_disable_data_path(u32 clnt_hdl)
 			if (res) {
 				IPAERR("tag process timeout client:%d err:%d\n",
 					clnt_hdl, res);
-				ipa_assert();
+				res = 0;
 			}
 		}
 	}

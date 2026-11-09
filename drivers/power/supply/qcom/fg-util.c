@@ -564,8 +564,11 @@ int fg_sram_write(struct fg_dev *fg, u16 address, u8 offset,
 	if (flags & FG_IMA_ATOMIC)
 		atomic_access = true;
 
-	/* With DMA granted, SRAM transaction is already atomic */
-	if (fg->use_dma)
+	/*
+	 * With DMA granted, SRAM transaction is already atomic on PM8150B.
+	 * PMI8998 (4.9) still syncs atomic writes to the FG cycle via SOC_UPDATE.
+	 */
+	if (fg->use_dma && fg->version != GEN3_FG)
 		atomic_access = false;
 
 	mutex_lock(&fg->sram_rw_lock);

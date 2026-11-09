@@ -2,6 +2,7 @@
 /* Copyright (c) 2016-2020 The Linux Foundation. All rights reserved.
  */
 
+#include <linux/moduleparam.h>
 #include <linux/device.h>
 #include <linux/regmap.h>
 #include <linux/delay.h>
@@ -819,7 +820,11 @@ static const struct apsd_result *smblib_update_usb_type(struct smb_charger *chg)
 	if (chg->pd_active) {
 		chg->real_charger_type = POWER_SUPPLY_TYPE_USB_PD;
 #if defined(CONFIG_MACH_XIAOMI_SDM845)
-		chg->usb_psy_desc.type = POWER_SUPPLY_TYPE_USB_PD;
+		if (apsd_result->pst == POWER_SUPPLY_TYPE_USB ||
+		    apsd_result->pst == POWER_SUPPLY_TYPE_USB_CDP)
+			chg->pc_port_seen = true;
+		chg->usb_psy_desc.type = chg->pc_port_seen ?
+			POWER_SUPPLY_TYPE_USB : POWER_SUPPLY_TYPE_USB_PD;
 #endif
 	} else {
 		/*
@@ -834,6 +839,8 @@ static const struct apsd_result *smblib_update_usb_type(struct smb_charger *chg)
 			chg->real_charger_type = apsd_result->pst;
 #if defined(CONFIG_MACH_XIAOMI_SDM845)
 			chg->usb_psy_desc.type = apsd_result->pst;
+			chg->pc_port_seen = apsd_result->pst == POWER_SUPPLY_TYPE_USB ||
+				apsd_result->pst == POWER_SUPPLY_TYPE_USB_CDP;
 		}
 #endif
 	}
@@ -1281,7 +1288,8 @@ int smblib_get_icl_current(struct smb_charger *chg, int *icl_ua)
 
 	if (((chg->typec_mode == POWER_SUPPLY_TYPEC_SOURCE_DEFAULT)
 		|| (chg->connector_type == POWER_SUPPLY_CONNECTOR_MICRO_USB))
-		&& (chg->usb_psy_desc.type == POWER_SUPPLY_TYPE_USB)) {
+		&& (chg->usb_psy_desc.type == POWER_SUPPLY_TYPE_USB)
+		&& !chg->pd_active) {
 		rc = get_sdp_current(chg, icl_ua);
 		if (rc < 0) {
 			smblib_err(chg, "Couldn't get SDP ICL rc=%d\n", rc);
@@ -2733,77 +2741,86 @@ static void smblib_reg_work(struct work_struct *work)
 #define PD_MICRO_7P5V	7500000
 #define PD_MICRO_8P5V	8500000
 #define PD_MICRO_9V		9000000
+static int fastchg_cool = 420;
+static int fastchg_warm = 450;
+module_param(fastchg_cool, int, 0644);
+module_param(fastchg_warm, int, 0644);
+#define FASTCHG_WARM_LEVEL	5
+
+static int smblib_fastchg_level(struct smb_charger *chg, int level)
+{
+	union power_supply_propval t = {0, };
+
+	if (level <= 0 || smblib_get_prop_from_bms(chg, POWER_SUPPLY_PROP_TEMP, &t) < 0)
+		return level;
+	if (t.intval < fastchg_cool)
+		return 0;
+	if (t.intval < fastchg_warm)
+		return min(level, FASTCHG_WARM_LEVEL);
+	return level;
+}
+
 static int smblib_therm_charging(struct smb_charger *chg)
 {
 	int thermal_icl_ua = 0;
-	int rc;
+	int rc, level;
 
 	if (chg->system_temp_level >= MAX_TEMP_LEVEL)
 		return 0;
 
-	switch (chg->usb_psy_desc.type) {
+	level = smblib_fastchg_level(chg, chg->system_temp_level);
+
+	switch (chg->pd_active ? POWER_SUPPLY_TYPE_USB_PD : chg->usb_psy_desc.type) {
 	case POWER_SUPPLY_TYPE_USB_HVDCP:
-		thermal_icl_ua = chg->thermal_mitigation_qc2[chg->system_temp_level];
+		thermal_icl_ua = chg->thermal_mitigation_qc2[level];
 		break;
 	case POWER_SUPPLY_TYPE_USB_HVDCP_3:
 		thermal_icl_ua =
-			chg->thermal_mitigation_qc3[chg->system_temp_level];
+			chg->thermal_mitigation_qc3[level];
 		break;
 	case POWER_SUPPLY_TYPE_USB_PD:
 		if (chg->voltage_min_uv >= PD_MICRO_5V
 				&& chg->voltage_min_uv < PD_MICRO_5P9V)
 			thermal_icl_ua =
-					chg->thermal_mitigation_pd_base[chg->system_temp_level];
+					chg->thermal_mitigation_pd_base[level];
 		else if (chg->voltage_min_uv >= PD_MICRO_5P9V
 					&& chg->voltage_min_uv < PD_MICRO_6P5V)
 			thermal_icl_ua =
-					chg->thermal_mitigation_pd_base[chg->system_temp_level]
+					chg->thermal_mitigation_pd_base[level]
 						* PD_6P5V_PERCENT / 100;
 		else if (chg->voltage_min_uv >= PD_MICRO_6P5V
 					&& chg->voltage_min_uv < PD_MICRO_7P5V)
 			thermal_icl_ua =
-					chg->thermal_mitigation_pd_base[chg->system_temp_level]
+					chg->thermal_mitigation_pd_base[level]
 						* PD_7P5V_PERCENT / 100;
 		else if (chg->voltage_min_uv >= PD_MICRO_7P5V
 					&& chg->voltage_min_uv <= PD_MICRO_8P5V)
 			thermal_icl_ua =
-					chg->thermal_mitigation_pd_base[chg->system_temp_level]
+					chg->thermal_mitigation_pd_base[level]
 						* PD_8P5V_PERCENT / 100;
 		else if (chg->voltage_min_uv >= PD_MICRO_8P5V)
 			thermal_icl_ua =
-					chg->thermal_mitigation_pd_base[chg->system_temp_level]
+					chg->thermal_mitigation_pd_base[level]
 						* PD_9V_PERCENT / 100;
 		else
 			thermal_icl_ua =
-					chg->thermal_mitigation_pd_base[chg->system_temp_level];
+					chg->thermal_mitigation_pd_base[level];
 		break;
 	case POWER_SUPPLY_TYPE_USB_DCP:
 	default:
-		thermal_icl_ua = chg->thermal_mitigation_dcp[chg->system_temp_level];
+		thermal_icl_ua = chg->thermal_mitigation_dcp[level];
 		break;
 	}
 
-	if (chg->usb_psy_desc.type == POWER_SUPPLY_TYPE_USB_HVDCP ||
-	    chg->usb_psy_desc.type == POWER_SUPPLY_TYPE_USB_HVDCP_3 ||
-	    chg->usb_psy_desc.type == POWER_SUPPLY_TYPE_USB_PD) {
-		union power_supply_propval batt_temp = {0, };
-		if (smblib_get_prop_from_bms(chg, POWER_SUPPLY_PROP_TEMP, &batt_temp) == 0) {
-			int floor_ua = (chg->usb_psy_desc.type == POWER_SUPPLY_TYPE_USB_HVDCP) ?
-					2000000 : 2500000;
-			if (batt_temp.intval < 380 && thermal_icl_ua < floor_ua)
-				thermal_icl_ua = floor_ua;
-		}
-	}
-
-	if (chg->system_temp_level == 0) {
+	if (level == 0) {
 		/* if therm_lvl_sel is 0, clear thermal voter */
 		rc = vote(chg->usb_icl_votable, THERMAL_DAEMON_VOTER, false, 0);
 		if (rc < 0)
 			pr_err("Couldn't disable USB thermal ICL vote rc=%d\n",
 				rc);
 	} else {
-		pr_info("thermal_icl_ua is %d, chg->system_temp_level: %d\n",
-				thermal_icl_ua, chg->system_temp_level);
+		pr_info("thermal_icl_ua is %d, chg->system_temp_level: %d (eff: %d)\n",
+				thermal_icl_ua, chg->system_temp_level, level);
 
 		rc = vote(chg->usb_icl_votable, THERMAL_DAEMON_VOTER, true,
 					thermal_icl_ua);
@@ -4772,6 +4789,7 @@ void smblib_usb_plugin_locked(struct smb_charger *chg)
 				!chg->pd_active)
 			pr_err("APSD disabled on vbus rising without PD\n");
 	} else {
+		chg->pc_port_seen = false;
 #if defined(CONFIG_MACH_XIAOMI_SDM845)
 		cancel_delayed_work_sync(&chg->typec_reenable_work);
 		cancel_delayed_work_sync(&chg->cc_float_charge_work);
@@ -6356,6 +6374,19 @@ static void bms_update_work(struct work_struct *work)
 						bms_update_work);
 
 	smblib_suspend_on_debug_battery(chg);
+
+#if defined(CONFIG_MACH_XIAOMI_SDM845) && defined(CONFIG_THERMAL)
+	if (chg->typec_present && chg->system_temp_level > 0 &&
+	    chg->system_temp_level < chg->thermal_levels) {
+		static int last_eff = -1;
+		int eff = smblib_fastchg_level(chg, chg->system_temp_level);
+
+		if (eff != last_eff) {
+			last_eff = eff;
+			smblib_therm_charging(chg);
+		}
+	}
+#endif
 
 	if (chg->batt_psy)
 		power_supply_changed(chg->batt_psy);
