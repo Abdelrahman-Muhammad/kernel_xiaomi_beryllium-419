@@ -656,10 +656,9 @@ static int fg_get_battery_esr(struct fg_dev *fg, int *val)
  */
 #define FG_MIN_PLAUSIBLE_VBATT_UV	2500000
 #define FG_EMPTY_SANITY_MSOC		10
-#define FG_VETO_MSOC_MAX		2
-#define FG_VETO_VBATT_UV		3650000
-#define FG_VETO_IBATT_MAX_UA		500000
-#define FG_VETO_CC_PCT_MIN		15
+#define FG_VETO_MSOC_MAX		15
+#define FG_VETO_VBATT_UV		3500000
+#define FG_VETO_CC_PCT_MIN		5
 
 static bool is_batt_empty(struct fg_dev *fg)
 {
@@ -813,18 +812,17 @@ static int fg_get_prop_capacity(struct fg_dev *fg, int *val)
 			return rc;
 
 		if (msoc <= FG_VETO_MSOC_MAX) {
-			int vbatt_uv = 0, ibatt_ua = 0, cc_uah = 0;
+			int vbatt_uv = 0, cc_uah = 0;
 
 			if (!fg_get_battery_voltage(fg, &vbatt_uv) &&
-			    !fg_get_battery_current(fg, &ibatt_ua) &&
 			    !fg_get_charge_counter(fg, &cc_uah) &&
 			    chip->cl.learned_cc_uah > 0 && cc_uah > 0) {
 				int cc_pct = div_u64((u64)cc_uah * 100,
 						     chip->cl.learned_cc_uah);
 
 				if (vbatt_uv >= FG_VETO_VBATT_UV &&
-				    abs(ibatt_ua) < FG_VETO_IBATT_MAX_UA &&
-				    cc_pct >= FG_VETO_CC_PCT_MIN) {
+				    cc_pct >= FG_VETO_CC_PCT_MIN &&
+				    cc_pct > msoc + 3) {
 					pr_warn_ratelimited("fg: msoc %d vs cc %d%% at %d uV, vetoed\n",
 							    msoc, cc_pct, vbatt_uv);
 					msoc = clamp(cc_pct, 2, 100);
@@ -844,23 +842,17 @@ static int fg_get_prop_capacity(struct fg_dev *fg, int *val)
 	}
 
 	/*
-	 * Never report 0 % if the physical cell voltage is at or above
-	 * the hardware cutoff threshold (typically 3.4 V).  If the fuel
-	 * gauge reports 0 %, clamp to 1 % to prevent an immediate
-	 * shutdown,battery, and schedule a restart to recalibrate from OCV.
+	 * Do not report 0% if battery voltage is at or above cutoff.
+	 * Do not restart the fuel gauge at runtime because load drops the
+	 * voltage and resets the charge counter.
 	 */
 	if (*val <= 0) {
 		int vbatt_uv = 0;
-		if (fg_get_battery_voltage(fg, &vbatt_uv) == 0 &&
+		if (fg_get_battery_voltage(fg, &vbatt_uv) < 0 ||
 		    vbatt_uv >= chip->dt.cutoff_volt_mv * 1000) {
 			pr_warn_ratelimited("FG: capacity 0%% rejected, vbatt=%d uV >= cutoff=%d uV. Clamping to 1%%\n",
 				vbatt_uv, chip->dt.cutoff_volt_mv * 1000);
 			*val = 1;
-#if defined(CONFIG_MACH_XIAOMI_SDM845)
-			if (!fg->empty_restart_fg && !fg->fg_restarting)
-				schedule_delayed_work(&fg->empty_restart_fg_work,
-						      msecs_to_jiffies(100));
-#endif
 		}
 	}
 
@@ -3886,14 +3878,22 @@ static int fg_psy_get_property(struct power_supply *psy,
 		rc = fg_get_prop_capacity(fg, &pval->intval);
 #if defined(CONFIG_MACH_XIAOMI_SDM845)
 		// Using smooth battery capacity.
-		if (fg->param.batt_soc >= 0)
+		if (fg->param.batt_soc >= 0) {
 			pval->intval = fg->param.batt_soc;
+			rc = 0;
+		}
 #endif
+		if (rc < 0 && fg->last_soc >= 0) {
+			pval->intval = fg->last_soc;
+			rc = 0;
+		}
 		if (pval->intval <= 0) {
 			int vbatt_uv = 0;
-			if (fg_get_battery_voltage(fg, &vbatt_uv) == 0 &&
-			    vbatt_uv >= chip->dt.cutoff_volt_mv * 1000)
+			if (fg_get_battery_voltage(fg, &vbatt_uv) < 0 ||
+			    vbatt_uv >= chip->dt.cutoff_volt_mv * 1000) {
 				pval->intval = 1;
+				rc = 0;
+			}
 		}
 		break;
 	case POWER_SUPPLY_PROP_REAL_CAPACITY:
@@ -4954,15 +4954,10 @@ static irqreturn_t fg_empty_soc_irq_handler(int irq, void *data)
 
 	fg_dbg(fg, FG_IRQ, "irq %d triggered\n", irq);
 
-	if (fg_get_battery_voltage(fg, &vbatt_uv) == 0 &&
+	if (fg_get_battery_voltage(fg, &vbatt_uv) < 0 ||
 	    vbatt_uv >= chip->dt.cutoff_volt_mv * 1000) {
 		pr_warn_ratelimited("FG: spurious empty IRQ with healthy vbatt=%d uV >= cutoff=%d uV\n",
 			vbatt_uv, chip->dt.cutoff_volt_mv * 1000);
-#if defined(CONFIG_MACH_XIAOMI_SDM845)
-		if (!fg->empty_restart_fg && !fg->fg_restarting)
-			schedule_delayed_work(&fg->empty_restart_fg_work,
-					      msecs_to_jiffies(100));
-#endif
 		return IRQ_HANDLED;
 	}
 
@@ -5836,7 +5831,8 @@ static void empty_restart_fg_work(struct work_struct *work)
 				return;
 			}
 			pr_info("FG restart done\n");
-			fg->param.batt_soc = -EINVAL;
+			if (!fg_get_prop_capacity(fg, &fg->param.batt_raw_soc))
+				fg->param.batt_soc = fg->param.batt_raw_soc;
 			fg->param.update_now = true;
 			if (batt_psy_initialized(fg))
 				power_supply_changed(fg->batt_psy);
@@ -5938,10 +5934,6 @@ static void fg_battery_soc_smooth_tracking(struct fg_dev *fg)
 
 	soc_changed = min(1, delta_time);
 
-	if (soc_changed && last_batt_soc >= 0 &&
-	    abs(last_batt_soc - fg->param.batt_raw_soc) > 5)
-		soc_changed = abs(last_batt_soc - fg->param.batt_raw_soc) / 4;
-
 	if (last_batt_soc >= 0) {
 		if (last_batt_soc < fg->param.batt_raw_soc &&
 					fg->param.batt_ma < 0)
@@ -5979,7 +5971,7 @@ static void fg_battery_soc_smooth_tracking(struct fg_dev *fg)
 	if (last_batt_soc <= 0) {
 		struct fg_gen3_chip *chip = container_of(fg, struct fg_gen3_chip, fg);
 		int vbatt_uv = 0;
-		if (fg_get_battery_voltage(fg, &vbatt_uv) == 0 &&
+		if (fg_get_battery_voltage(fg, &vbatt_uv) < 0 ||
 		    vbatt_uv >= chip->dt.cutoff_volt_mv * 1000)
 			last_batt_soc = 1;
 	}
@@ -5999,7 +5991,7 @@ static void fg_battery_soc_smooth_tracking(struct fg_dev *fg)
 #define MONITOR_SOC_WAIT_PER_MS             10000
 static void soc_monitor_work(struct work_struct *work)
 {
-	int rc;
+	int rc, cap_rc;
 	struct delayed_work *dwork = to_delayed_work(work);
 	struct fg_dev *fg = container_of(dwork,
 				struct fg_dev, soc_monitor_work);
@@ -6008,15 +6000,15 @@ static void soc_monitor_work(struct work_struct *work)
 	if (rc < 0)
 		pr_err("failded to get battery current, rc=%d\n", rc);
 
-	rc = fg_get_prop_capacity(fg, &fg->param.batt_raw_soc);
-	if (rc < 0)
-		pr_err("failed to get battery capacity, rc=%d\n", rc);
+	cap_rc = fg_get_prop_capacity(fg, &fg->param.batt_raw_soc);
+	if (cap_rc < 0)
+		pr_err("failed to get battery capacity, rc=%d\n", cap_rc);
 
 	rc = fg_get_battery_temp(fg, &fg->param.batt_temp);
 	if (rc < 0)
 		pr_err("failed to get battery temperature, rc=%d\n", rc);
 
-	if (fg->soc_reporting_ready)
+	if (fg->soc_reporting_ready && !cap_rc)
 		fg_battery_soc_smooth_tracking(fg);
 
 	pr_debug("soc:%d, raw_soc:%d, c:%d, s:%d\n",
@@ -6299,6 +6291,8 @@ static int fg_gen3_probe(struct platform_device *pdev)
 		msleep(20);
 		rc = fg_get_battery_voltage(fg, &volt_uv);
 	}
+	if (fg->last_valid_vbatt_uv < FG_MIN_PLAUSIBLE_VBATT_UV)
+		fg->last_valid_vbatt_uv = 3700000;
 	if (!rc)
 		rc = fg_get_prop_capacity(fg, &msoc);
 
@@ -6387,9 +6381,6 @@ static int fg_gen3_resume(struct device *dev)
 
 	spin_lock(&fg->suspend_lock);
 	fg->suspended = false;
-#if defined(CONFIG_MACH_XIAOMI_SDM845)
-	fg->param.update_now = true;
-#endif
 	spin_unlock(&fg->suspend_lock);
 
 #if defined(CONFIG_MACH_XIAOMI_SDM845)

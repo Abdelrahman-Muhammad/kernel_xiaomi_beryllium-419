@@ -513,6 +513,7 @@ struct fg_dev {
 	int			maint_soc;
 	int			delta_soc;
 	int			last_msoc;
+	int			last_valid_vbatt_uv;
 	int			last_recharge_volt_mv;
 	int			delta_temp_irq_count;
 	enum esr_filter_status	esr_flt_sts;

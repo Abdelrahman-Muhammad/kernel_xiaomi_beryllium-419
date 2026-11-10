@@ -2016,9 +2016,14 @@ static int smb2_configure_typec(struct smb_charger *chg)
 		return rc;
 	}
 
-	/* Set CC threshold to 1.6 V in source mode */
-	rc = smblib_masked_write(chg, TYPE_C_CFG_2_REG, DFP_CC_1P4V_OR_1P6V_BIT,
-				 DFP_CC_1P4V_OR_1P6V_BIT);
+	/*
+	 * Use 180 uA source pull-up and 1.4 V CC threshold in DFP mode.
+	 * This stops ~15 kOhm port resistance from triggering false OTG mode.
+	 */
+	rc = smblib_masked_write(chg, TYPE_C_CFG_2_REG,
+				 DFP_CC_1P4V_OR_1P6V_BIT |
+				 EN_80UA_180UA_CUR_SOURCE_BIT,
+				 EN_80UA_180UA_CUR_SOURCE_BIT);
 	if (rc < 0)
 		dev_err(chg->dev,
 			"Couldn't configure CC threshold voltage rc=%d\n", rc);

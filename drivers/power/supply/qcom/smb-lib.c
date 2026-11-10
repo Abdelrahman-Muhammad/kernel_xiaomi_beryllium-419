@@ -3810,13 +3810,13 @@ int smblib_set_prop_typec_select_rp(struct smb_charger *chg,
 
 	switch (val->intval) {
 	case TYPEC_SRC_RP_STD:
-		rc = smblib_masked_write(chg, TYPE_C_CFG_2_REG,
-			EN_80UA_180UA_CUR_SOURCE_BIT,
-			TYPEC_SRC_RP_STD);
-		break;
 	case TYPEC_SRC_RP_1P5A:
 	case TYPEC_SRC_RP_3A:
 	case TYPEC_SRC_RP_3A_DUPLICATE:
+		/*
+		 * Keep 180 uA source current enabled in DFP mode.
+		 * Dropping to 80 uA lets port dirt trigger false sink attach.
+		 */
 		rc = smblib_masked_write(chg, TYPE_C_CFG_2_REG,
 			EN_80UA_180UA_CUR_SOURCE_BIT,
 			TYPEC_SRC_RP_1P5A);
@@ -5623,11 +5623,16 @@ try_wait_src:
 		exit_mode = UNATTACHED_SINK;
 
 try_sink_exit:
-	/* release forcing of SRC/SNK mode */
-	val.intval = POWER_SUPPLY_TYPEC_PR_DUAL;
-	rc = smblib_set_prop_typec_power_role(chg, &val);
-	if (rc < 0)
-		smblib_err(chg, "Couldn't set DFP mode rc=%d\n", rc);
+	/*
+	 * Keep source mode if we confirmed an attached sink.
+	 * Switching to DRP before VBUS turns on resets the port state.
+	 */
+	if (exit_mode != ATTACHED_SRC) {
+		val.intval = POWER_SUPPLY_TYPEC_PR_DUAL;
+		rc = smblib_set_prop_typec_power_role(chg, &val);
+		if (rc < 0)
+			smblib_err(chg, "Couldn't set DFP mode rc=%d\n", rc);
+	}
 
 	/* revert Tccdebounce time back to ~120ms */
 	rc = smblib_masked_write(chg, MISC_CFG_REG, TCC_DEBOUNCE_20MS_BIT, 0);
@@ -5648,12 +5653,24 @@ static void typec_sink_insertion(struct smb_charger *chg)
 
 	if (exit_mode != ATTACHED_SRC) {
 		chg->typec_present = false;
+		chg->typec_mode = POWER_SUPPLY_TYPEC_NONE;
+		vote(chg->pd_disallowed_votable_indirect, CC_DETACHED_VOTER,
+				true, 0);
+		smblib_masked_write(chg, TYPE_C_CFG_REG,
+				APSD_START_ON_CC_BIT, APSD_START_ON_CC_BIT);
 		return;
 	}
 
 	typec_mode = smblib_get_prop_typec_mode(chg);
-	if (typec_mode == POWER_SUPPLY_TYPEC_NONE)
+	if (typec_mode == POWER_SUPPLY_TYPEC_NONE) {
+		chg->typec_present = false;
+		chg->typec_mode = POWER_SUPPLY_TYPEC_NONE;
+		vote(chg->pd_disallowed_votable_indirect, CC_DETACHED_VOTER,
+				true, 0);
+		smblib_masked_write(chg, TYPE_C_CFG_REG,
+				APSD_START_ON_CC_BIT, APSD_START_ON_CC_BIT);
 		return;
+	}
 	if (typec_mode == POWER_SUPPLY_TYPEC_SINK_AUDIO_ADAPTER)
 		chg->is_audio_adapter = true;
 
@@ -6007,8 +6024,11 @@ static void smblib_handle_typec_cc_state_change(struct smb_charger *chg)
 #endif
 		smblib_handle_typec_insertion(chg);
 #if defined(CONFIG_MACH_XIAOMI_SDM845)
-		schedule_delayed_work(&chg->charger_type_recheck, msecs_to_jiffies(20000));
-		schedule_delayed_work(&chg->connector_health_work, 0);
+		if (chg->typec_present &&
+		    !(chg->typec_status[3] & UFP_DFP_MODE_STATUS_BIT)) {
+			schedule_delayed_work(&chg->charger_type_recheck, msecs_to_jiffies(20000));
+			schedule_delayed_work(&chg->connector_health_work, 0);
+		}
 #endif
 	} else if (chg->typec_present &&
 				chg->typec_mode == POWER_SUPPLY_TYPEC_NONE) {

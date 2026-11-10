@@ -1055,14 +1055,14 @@ int fg_get_battery_voltage(struct fg_dev *fg, int *val)
 		if (rc < 0) {
 			pr_err("failed to read addr=0x%04x, rc=%d\n",
 				BATT_INFO_VBATT_LSB(fg), rc);
-			return rc;
+			goto fallback;
 		}
 
 		rc = fg_read(fg, BATT_INFO_VBATT_LSB_CP(fg), buf_cp, 2);
 		if (rc < 0) {
 			pr_err("failed to read addr=0x%04x, rc=%d\n",
 				BATT_INFO_VBATT_LSB_CP(fg), rc);
-			return rc;
+			goto fallback;
 		}
 
 		if (buf[0] == buf_cp[0] && buf[1] == buf_cp[1])
@@ -1071,7 +1071,8 @@ int fg_get_battery_voltage(struct fg_dev *fg, int *val)
 
 	if (tries == MAX_READ_TRIES) {
 		pr_err("VBATT: shadow registers do not match\n");
-		return -EINVAL;
+		rc = -EINVAL;
+		goto fallback;
 	}
 
 	if (fg->wa_flags & PMI8998_V1_REV_WA)
@@ -1084,10 +1085,24 @@ int fg_get_battery_voltage(struct fg_dev *fg, int *val)
 
 	if (*val < BATT_VOLTAGE_MIN_UV) {
 		pr_err("Ignoring implausible VBATT %d uV\n", *val);
-		return -EINVAL;
+		rc = -EINVAL;
+		goto fallback;
 	}
 
+	fg->last_valid_vbatt_uv = *val;
 	return 0;
+
+fallback:
+	/*
+	 * Return the last good voltage if a read fails.
+	 * If we return an error, Android reads 0 mV and shuts down the phone.
+	 */
+	if (fg->last_valid_vbatt_uv >= BATT_VOLTAGE_MIN_UV) {
+		*val = fg->last_valid_vbatt_uv;
+		return 0;
+	}
+
+	return rc;
 }
 
 int fg_set_constant_chg_voltage(struct fg_dev *fg, int volt_uv)
